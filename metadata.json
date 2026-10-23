@@ -1,0 +1,6 @@
+{
+  "name": "Roots of Bengal",
+  "description": "Rooted in Tradition, Every Piece Tells a Story. A Bengali cultural heritage brand, editorial journal, and traditional artisan marketplace across Bangladesh, West Bengal, and neighboring communities.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

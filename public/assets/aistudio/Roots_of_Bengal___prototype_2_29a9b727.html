@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Roots of Bengal — Rustic &amp; Heritage Clickable Prototype</title>
+<link href="https://fonts.googleapis.com/css2?family=Lora:ital,wght@0,500;0,700;1,500&family=IM+Fell+English:ital@0;1&display=swap" rel="stylesheet">
+<style>
+:root{box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px);--bg:#efe2c6;--bg2:#e4d3ad;--paper:#f6ecd4;--ink:#3b2a1a;--terra:#b5502d;--moss:#5d7a4a;--clay:#8a4b2a;--gold:#c9973f;--page:#d9c9a3}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--page:#1d1710}}
+*{box-sizing:border-box;margin:0;padding:0}
+html{scroll-padding-top:env(safe-area-inset-top,0px)}
+body{background:var(--page);font-family:Lora,serif;color:var(--ink);line-height:1.55;font-size:15px}
+.wrap{max-width:1200px;margin:0 auto;min-height:100vh;background:var(--bg);background-image:radial-gradient(#8b5a2b18 1px,transparent 1.6px);background-size:6px 6px;box-shadow:0 10px 40px #0005;display:flex;flex-direction:column}
+h1,h2,h3,.logo{font-family:'IM Fell English',Lora,serif;font-weight:400}
+.ann{background:var(--terra);color:#fff3dc;text-align:center;font-size:12px;padding:6px;letter-spacing:.05em}
+.frieze{height:12px;background:repeating-linear-gradient(90deg,var(--terra) 0 10px,var(--bg) 10px 14px,var(--moss) 14px 24px,var(--bg) 24px 28px)}
+nav{display:flex;align-items:center;justify-content:space-between;padding:14px 40px;flex-wrap:wrap;gap:10px;position:sticky;top:env(safe-area-inset-top,0px);background:var(--bg);z-index:5;border-bottom:1px solid #8a4b2a33}
+.logo{font-size:27px;color:var(--clay);cursor:pointer}
+nav ul{display:flex;gap:22px;list-style:none;font-size:14px}nav li{cursor:pointer;padding-bottom:2px;border-bottom:2px solid transparent}nav li:hover,nav li.on{color:var(--terra);border-color:var(--terra)}
+.cartb{cursor:pointer;border:2px solid var(--clay);padding:5px 14px;font-size:13px;font-weight:700;background:var(--paper)}
+.btn{display:inline-block;background:var(--terra);color:#fff3dc;padding:11px 24px;border-radius:3px;font:700 14px Lora;border:2px solid var(--clay);box-shadow:3px 3px 0 var(--clay);cursor:pointer}
+.btn:active{transform:translate(2px,2px);box-shadow:1px 1px 0 var(--clay)}.btn.o{background:transparent;color:var(--clay)}
+main{flex:1;padding:30px 40px 50px}
+.sh{text-align:center;margin-bottom:22px}.sh h2{font-size:36px}.sh p{opacity:.7;font-size:14px}
+.sh:after{content:"❖  ✦  ❖";display:block;color:var(--terra);letter-spacing:.5em;font-size:12px;margin-top:6px}
+svg{display:block;width:100%;height:100%}
+.hero{display:grid;grid-template-columns:1fr 1fr;gap:30px;align-items:center;margin-bottom:40px}
+.hero h1{font-size:clamp(36px,5vw,58px);line-height:1.02;margin-bottom:14px}.hero h1 em{color:var(--terra)}.hero p{max-width:430px;margin-bottom:22px;opacity:.85}
+.hero .fr{border:3px double var(--clay);padding:8px;background:var(--paper);transform:rotate(1deg);aspect-ratio:1.4}
+.chips{display:flex;gap:8px;flex-wrap:wrap;justify-content:center;margin-bottom:22px}
+.chip{border:1px solid var(--clay);padding:5px 14px;font-size:13px;cursor:pointer;background:var(--paper)}.chip.on{background:var(--clay);color:#fff3dc}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(235px,1fr));gap:20px}
+.card{background:var(--paper);border:1px solid #8a4b2a55;padding:10px;box-shadow:4px 4px 0 #8a4b2a33;cursor:pointer;position:relative;transition:transform .15s}.card:hover{transform:translateY(-3px)}
+.card .im{aspect-ratio:1;border:1px solid #8a4b2a55}.card h3{font-size:19px;margin-top:9px}.card .o{font-size:12px;font-style:italic;opacity:.7}
+.card .pr{display:flex;justify-content:space-between;align-items:center;margin-top:7px;font-weight:700;color:var(--terra)}
+.card .pr span{font-size:11px;border:1px solid var(--clay);color:var(--clay);padding:3px 9px}.card .pr span:hover{background:var(--clay);color:#fff3dc}
+.badge{position:absolute;top:18px;left:18px;background:var(--moss);color:#fff;font-size:10px;padding:2px 8px;letter-spacing:.05em;z-index:1}
+.crumb{font-size:12px;opacity:.7;margin-bottom:16px}.crumb a{cursor:pointer;text-decoration:underline}
+.pd{display:grid;grid-template-columns:1.05fr 1fr;gap:40px}
+.pd .main{border:3px double var(--clay);padding:8px;background:var(--paper);aspect-ratio:1}
+.thumbs{display:flex;gap:10px;margin-top:12px}.thumbs div{width:70px;height:70px;border:2px solid #8a4b2a55;padding:3px;background:var(--paper);cursor:pointer}.thumbs div.on{border-color:var(--terra)}
+.pd h1{font-size:40px;line-height:1.05;margin:4px 0 6px}.pd .pp{font:700 26px Lora;color:var(--terra);margin:8px 0}
+.pd .by{font-style:italic;cursor:pointer;color:var(--clay);text-decoration:underline}
+.opt{margin:14px 0}.opt b{display:block;font-size:12px;letter-spacing:.08em;text-transform:uppercase;margin-bottom:6px}
+.qty{display:inline-flex;border:2px solid var(--clay);margin-right:10px;vertical-align:middle}.qty span{padding:8px 14px;cursor:pointer;background:var(--paper);font-weight:700}.qty i{padding:8px 14px;font-style:normal;min-width:44px;text-align:center}
+.det{margin-top:20px;border-top:1px dashed var(--clay)}.det div{padding:11px 0;border-bottom:1px dashed var(--clay);font-size:14px}.det b{display:block}
+.story{background:var(--bg2);border:2px solid var(--clay);display:grid;grid-template-columns:1fr 1.6fr;margin-bottom:30px}
+.story .ph{padding:24px}.story .ph div{border:3px double var(--clay);padding:6px;background:var(--paper);aspect-ratio:1}
+.story .tx{padding:30px}.story h1{font-size:38px;line-height:1.05;margin-bottom:10px}
+blockquote{font-style:italic;border-left:3px solid var(--terra);padding-left:14px;margin:14px 0}
+.stat{display:flex;gap:30px;margin:16px 0;flex-wrap:wrap}.stat b{display:block;font:400 30px 'IM Fell English';color:var(--terra)}.stat span{font-size:12px;opacity:.75}
+.cart{display:grid;grid-template-columns:1.6fr 1fr;gap:30px;align-items:start}
+.line{display:grid;grid-template-columns:80px 1fr auto;gap:14px;background:var(--paper);border:1px solid #8a4b2a55;padding:10px;margin-bottom:12px;align-items:center}
+.line .im{width:80px;height:80px;border:1px solid #8a4b2a55}.line h3{font-size:18px}.line small{opacity:.7;font-style:italic}.line .rm{font-size:12px;text-decoration:underline;cursor:pointer;color:var(--clay)}
+.sum{background:var(--bg2);border:2px solid var(--clay);padding:20px;position:sticky;top:80px}.sum h3{font-size:24px;margin-bottom:10px}
+.sum .r{display:flex;justify-content:space-between;padding:6px 0;font-size:14px;border-bottom:1px dashed var(--clay)}.sum .t{font-weight:700;font-size:18px;color:var(--terra)}
+.empty,.done{text-align:center;padding:50px 20px;background:var(--paper);border:2px dashed var(--clay)}.done h2{font-size:34px;color:var(--moss)}
+.toast{position:fixed;left:50%;bottom:calc(24px + env(safe-area-inset-bottom,0px));transform:translateX(-50%) translateY(80px);background:var(--ink);color:#efe2c6;padding:10px 20px;font-size:13px;transition:.3s;z-index:9;border-left:4px solid var(--gold)}.toast.on{transform:translateX(-50%) translateY(0)}
+footer{background:var(--ink);color:#efe2c6bb;padding:26px 40px;font-size:12px;display:flex;justify-content:space-between;flex-wrap:wrap;gap:10px}footer b{color:var(--gold)}
+.note{background:var(--ink);color:#efe2c6;font-size:12px;text-align:center;padding:7px}.note b{color:var(--gold)}
+@media(max-width:820px){main,nav,footer{padding-left:18px;padding-right:18px}.hero,.pd,.story,.cart{grid-template-columns:1fr}nav ul{gap:12px;flex-wrap:wrap}.sum{position:static}}
+</style></head><body><div class="wrap">
+<div class="note"><b>Clickable prototype</b> · Concept 02 Rustic &amp; Heritage · try: browse → open a product → add to bag → checkout</div>
+<div class="ann">Free shipping across Bangladesh over ৳3,000 · Every piece signed by its maker</div>
+<nav><span class="logo" onclick="go('home')">Roots of Bengal</span><ul id="nv"></ul><span class="cartb" onclick="go('cart')" id="cb">Bag (0)</span></nav>
+<div class="frieze"></div>
+<main id="v"></main>
+<footer><span><b>Roots of Bengal</b> · Preserving Bengali heritage, one craft at a time.</span><span>bKash · Nagad · Visa · Mastercard</span></footer>
+</div><div class="toast" id="ts"></div>
+<script>
+const P=['#e4d3ad','#b5502d','#5d7a4a','#8a4b2a'];
+function art(k,p=P){const s=[
+`<rect width="100" height="100" fill="${p[0]}"/><rect x="6" y="6" width="88" height="88" fill="none" stroke="${p[1]}" stroke-width="2" stroke-dasharray="3 2"/><rect x="14" y="14" width="72" height="72" fill="none" stroke="${p[2]}" stroke-width="1.5" stroke-dasharray="1 2"/><g fill="${p[1]}"><circle cx="50" cy="50" r="12"/><circle cx="50" cy="50" r="6" fill="${p[0]}"/><circle cx="50" cy="30" r="5"/><circle cx="50" cy="70" r="5"/><circle cx="30" cy="50" r="5"/><circle cx="70" cy="50" r="5"/></g>`,
+`<rect width="100" height="100" fill="${p[3]}"/>${[0,1,2,3,4,5,6,7].map(i=>`<rect x="${i*13}" width="6" height="100" fill="${p[i%2?0:2]}" opacity=".85"/>`).join('')}${[15,40,65,88].map(y=>`<path d="M50 ${y-9}l9 9-9 9-9-9z" fill="${p[0]}" stroke="${p[1]}"/>`).join('')}`,
+`<rect width="100" height="100" fill="${p[0]}"/><ellipse cx="50" cy="92" rx="32" ry="4" fill="#0003"/><path d="M40 14h20v10c18 6 28 22 24 42-3 14-14 24-34 24S19 80 16 66c-4-20 6-36 24-42z" fill="${p[1]}"/><path d="M22 52h56M20 62h60" stroke="${p[0]}" stroke-width="2" stroke-dasharray="4 2"/><rect x="38" y="10" width="24" height="6" rx="3" fill="${p[1]}"/>`,
+`<rect width="100" height="100" fill="${p[0]}"/><path d="M22 36h56l-8 52H30z" fill="#b98a4e"/>${[0,1,2,3,4,5].map(i=>`<path d="M${24+i*2} ${42+i*9}h${52-i*4}" stroke="${p[3]}" stroke-width="1.6"/>`).join('')}${[0,1,2,3,4,5,6].map(i=>`<path d="M${28+i*7.5} 38l${-3+i*.6} 48" stroke="${p[3]}" stroke-width="1.2"/>`).join('')}<path d="M24 36c0-26 52-26 52 0" fill="none" stroke="#b98a4e" stroke-width="4"/>`,
+`<rect width="100" height="100" fill="${p[0]}"/>${[40,32,24].map((r,i)=>`<circle cx="50" cy="52" r="${r}" fill="none" stroke="${i==1?p[2]:'#c9973f'}" stroke-width="5" stroke-dasharray="${i==1?'2 3':'0'}"/>`).join('')}<circle cx="50" cy="52" r="6" fill="#c9973f"/>`,
+`<rect width="100" height="100" fill="${p[0]}"/><circle cx="50" cy="42" r="32" fill="${p[2]}"/>${[0,1,2,3,4,5,6,7].map(i=>`<path d="M50 42L${50+32*Math.cos(i*.785)} ${42+32*Math.sin(i*.785)}" stroke="${p[0]}" stroke-width="2"/>`).join('')}<circle cx="50" cy="42" r="8" fill="${p[1]}"/><rect x="47" y="72" width="6" height="24" rx="3" fill="${p[3]}"/>`];
+return `<svg viewBox="0 0 100 100" preserveAspectRatio="xMidYMid slice">${s[k]}</svg>`}
+const face=`<svg viewBox="0 0 100 100"><rect width="100" height="100" fill="#b5502d" opacity=".4"/><circle cx="50" cy="42" r="19" fill="#c88a5b"/><path d="M28 40c0-24 44-24 44 0 0-8-8-14-22-14S28 32 28 40z" fill="#2b1a12"/><path d="M14 100c2-26 20-34 36-34s34 8 36 34z" fill="#5d7a4a"/></svg>`;
+const crafts=['All','Nakshi Kantha','Jamdani','Pottery','Cane & Bamboo','Jewelry','Folk Art'];
+const D=[
+{id:1,n:'Nakshi Kantha Throw',c:'Nakshi Kantha',a:'Rahima Begum',v:'Jamalpur',p:4800,k:0,t:'New',h:'5 weeks',d:'Layered recycled cotton saris, stitched with running-stitch lotus and vine motifs.'},
+{id:2,n:'Jamdani Saree',c:'Jamdani',a:'Abdul Karim',v:'Rupganj',p:12500,k:1,t:'Heirloom',h:'3 weeks',d:'Fine cotton muslin brocaded by hand with geometric and floral motifs on a pit loom.'},
+{id:3,n:'Terracotta Vase',c:'Pottery',a:'Shefali Pal',v:'Dhamrai',p:1250,k:2,t:'Handthrown',h:'4 days',d:'Wheel-thrown river clay, sun-dried and kiln-fired, finished with a natural slip.'},
+{id:4,n:'Cane Storage Basket',c:'Cane & Bamboo',a:'Monu Mia',v:'Sylhet',p:1650,k:3,t:'Eco',h:'3 days',d:'Hand-woven cane with a sturdy rim, ideal for linens, toys or fruit.'},
+{id:5,n:'Brass Bangle Set',c:'Jewelry',a:'Bimal Karmakar',v:'Old Dhaka',p:2200,k:4,t:'Set of 3',h:'2 days',d:'Cast and hand-engraved brass bangles with traditional dotted patterns.'},
+{id:6,n:'Painted Hand Fan',c:'Folk Art',a:'Joba Rani',v:'Rajshahi',p:650,k:5,t:'Folk',h:'1 day',d:'A traditional haat pakha, bamboo-framed and hand painted with natural colours.'},
+{id:7,n:'Kantha Cushion Cover',c:'Nakshi Kantha',a:'Rahima Begum',v:'Jamalpur',p:1450,k:0,t:'',h:'1 week',d:'A 45×45 cm cushion cover with a signature lotus motif.'},
+{id:8,n:'Clay Water Pot',c:'Pottery',a:'Shefali Pal',v:'Dhamrai',p:980,k:2,t:'',h:'3 days',d:'A traditional kolshi that keeps water naturally cool.'}];
+const tk=n=>'৳'+n.toLocaleString('en-US');
+let cart=[],view='home',cur='All',pid=1,imgv=0,qty=1,opt='Terracotta',done=false;
+function go(v,id){if(v=='p'){pid=id;qty=1;imgv=0}view=v;done=false;try{location.hash=v=='p'?'p'+id:v}catch(e){}render();scrollTo(0,0)}
+function toast(m){const t=document.getElementById('ts');t.textContent=m;t.classList.add('on');setTimeout(()=>t.classList.remove('on'),1800)}
+function add(id,q=1,e){if(e)e.stopPropagation();const l=cart.find(x=>x.id==id);l?l.q+=q:cart.push({id,q});toast('Added to your bag');render(true)}
+function card(p){return `<div class="card" onclick="go('p',${p.id})">${p.t?`<span class="badge">${p.t}</span>`:''}<div class="im">${art(p.k)}</div><h3>${p.n}</h3><div class="o">${p.a} · ${p.v}</div><div class="pr">${tk(p.p)}<span onclick="add(${p.id},1,event)">Add to bag</span></div></div>`}
+function render(keep){
+ const n=cart.reduce((s,x)=>s+x.q,0);document.getElementById('cb').textContent=`Bag (${n})`;
+ document.getElementById('nv').innerHTML=[['home','Home'],['shop','Shop Crafts'],['artisan','Our Artisans']].map(([k,l])=>`<li class="${view==k||(view=='p'&&k=='shop')?'on':''}" onclick="go('${k}')">${l}</li>`).join('');
+ if(keep&&view!='cart')return;
+ const m=document.getElementById('v');
+ if(view=='home')m.innerHTML=`<div class="hero"><div><h1>Woven from the <em>soil</em> of Bengal</h1><p>Nakshi kantha, Jamdani, terracotta and cane, made slowly by hand in the villages where each tradition was born.</p><span class="btn" onclick="go('shop')">Shop the Collection</span> &nbsp;<span class="btn o" onclick="go('artisan')">Meet the Makers</span></div><div class="fr">${art(0)}</div></div><div class="sh"><h2>Hand-Picked from the Villages</h2><p>Each piece is one of a kind</p></div><div class="grid">${D.slice(0,4).map(card).join('')}</div><div style="text-align:center;margin-top:24px"><span class="btn o" onclick="go('shop')">View all crafts →</span></div>`;
+ else if(view=='shop'){const L=D.filter(p=>cur=='All'||p.c==cur);m.innerHTML=`<div class="sh"><h2>Shop by Craft</h2><p>${L.length} handmade pieces</p></div><div class="chips">${crafts.map(c=>`<span class="chip ${c==cur?'on':''}" onclick="cur='${c}';render()">${c}</span>`).join('')}</div><div class="grid">${L.map(card).join('')}</div>`}
+ else if(view=='p'){const p=D.find(x=>x.id==pid);const th=[0,1,2].map(i=>`<div class="${i==imgv?'on':''}" onclick="imgv=${i};render()">${art((p.k+i*2)%6)}</div>`).join('');
+  m.innerHTML=`<div class="crumb"><a onclick="go('home')">Home</a> / <a onclick="go('shop')">Shop</a> / ${p.c}</div><div class="pd"><div><div class="main">${art((p.k+imgv*2)%6)}</div><div class="thumbs">${th}</div></div><div><small style="color:var(--terra);font-weight:700;letter-spacing:.1em">${p.c.toUpperCase()}</small><h1>${p.n}</h1><div>by <span class="by" onclick="go('artisan')">${p.a}</span>, ${p.v}</div><div class="pp">${tk(p.p)}</div><p style="opacity:.85">${p.d}</p>
+  <div class="opt"><b>Colourway</b>${['Terracotta','Paddy Green','Natural'].map(o=>`<span class="chip ${o==opt?'on':''}" onclick="opt='${o}';render()">${o}</span>`).join(' ')}</div>
+  <div class="opt"><span class="qty"><span onclick="qty=Math.max(1,qty-1);render()">−</span><i>${qty}</i><span onclick="qty++;render()">+</span></span><span class="btn" onclick="add(${p.id},qty)">Add to Bag · ${tk(p.p*qty)}</span></div>
+  <div class="det"><div><b>Time to make</b>${p.h}, by hand</div><div><b>Signed by the maker</b>Includes an origin card with ${p.a}’s story</div><div><b>Delivery</b>3–5 days in Bangladesh · 7–12 days worldwide</div><div><b>Care</b>Handle gently; see the care guide in your parcel</div></div></div></div>
+  <div class="sh" style="margin-top:44px"><h2>More from ${p.a.split(' ')[0]}</h2></div><div class="grid">${D.filter(x=>x.a==p.a&&x.id!=p.id).concat(D.filter(x=>x.a!=p.a)).slice(0,4).map(card).join('')}</div>`}
+ else if(view=='artisan')m.innerHTML=`<div class="story"><div class="ph"><div>${face}</div></div><div class="tx"><small style="color:var(--terra);font-weight:700;letter-spacing:.1em">ARTISAN OF THE MONTH</small><h1>Rahima Begum, Nakshi Kantha master</h1><div style="opacity:.7;font-style:italic">Jamalpur, Bangladesh</div><blockquote>“Every stitch carries a story my grandmother told me. When someone buys a kantha, they keep that story alive.”</blockquote><p style="opacity:.85">Rahima leads a collective of 32 women who turn old cotton saris into layered, embroidered heirlooms. She learned the craft at age eight, sitting beside her grandmother in the courtyard.</p><div class="stat"><div><b>32</b><span>women in the collective</span></div><div><b>3–6</b><span>weeks per piece</span></div><div><b>70%</b><span>of price paid to makers</span></div></div></div></div><div class="sh"><h2>Her Work</h2></div><div class="grid">${D.filter(x=>x.a=='Rahima Begum').map(card).join('')}</div><div class="sh" style="margin-top:44px"><h2>Other Makers</h2></div><div class="grid">${D.filter(x=>x.a!='Rahima Begum').slice(0,4).map(card).join('')}</div>`;
+ else if(view=='cart'){
+  if(done){m.innerHTML=`<div class="done"><h2>Dhonnobad! Order placed</h2><p style="margin:10px 0 20px">Your pieces will be signed by their makers and shipped within 3 days. A confirmation was sent to your email.</p><span class="btn" onclick="go('home')">Continue exploring</span></div>`;return}
+  if(!cart.length){m.innerHTML=`<div class="empty"><h2 style="font-size:32px">Your bag is empty</h2><p style="margin:8px 0 18px;opacity:.75">Find something made by hand.</p><span class="btn" onclick="go('shop')">Shop crafts</span></div>`;return}
+  const sub=cart.reduce((s,x)=>s+D.find(d=>d.id==x.id).p*x.q,0),ship=sub>=3000?0:120;
+  m.innerHTML=`<div class="sh"><h2>Your Bag</h2></div><div class="cart"><div>${cart.map(x=>{const p=D.find(d=>d.id==x.id);return `<div class="line"><div class="im">${art(p.k)}</div><div><h3>${p.n}</h3><small>${p.a} · ${p.v}</small><div style="margin-top:6px"><span class="qty" style="transform:scale(.85);transform-origin:left"><span onclick="chg(${p.id},-1)">−</span><i>${x.q}</i><span onclick="chg(${p.id},1)">+</span></span> <span class="rm" onclick="chg(${p.id},-99)">Remove</span></div></div><b style="color:var(--terra)">${tk(p.p*x.q)}</b></div>`}).join('')}</div>
+  <div class="sum"><h3>Order Summary</h3><div class="r"><span>Subtotal</span><span>${tk(sub)}</span></div><div class="r"><span>Delivery</span><span>${ship?tk(ship):'Free'}</span></div><div class="r t"><span>Total</span><span>${tk(sub+ship)}</span></div><p style="font-size:12px;opacity:.7;margin:10px 0">${sub<3000?`Add ${tk(3000-sub)} more for free delivery.`:'You’ve unlocked free delivery.'}</p><span class="btn" style="display:block;text-align:center" onclick="cart=[];done=true;render()">Checkout · bKash / Nagad / Card</span></div></div>`}
+}
+function chg(id,d){const l=cart.find(x=>x.id==id);l.q+=d;if(l.q<=0)cart=cart.filter(x=>x.id!=id);render()}
+const h=(location.hash||'').slice(1);if(/^p\d$/.test(h)&&D[h.slice(1)-1]){view='p';pid=+h.slice(1)}else if(['shop','artisan','cart'].includes(h))view=h;
+render();
+</script></body></html>
