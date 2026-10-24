@@ -1,0 +1,423 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ===============================================================
+    // Global Default Deny
+    // ===============================================================
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // ===============================================================
+    // Helper Functions & Primitives
+    // ===============================================================
+
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    // Server-verified admin: strictly checks custom claims or trusted /adminUsers/{uid} document
+    // Never assumes admin rights based purely on an email address string or client-supplied role
+    function isAdmin() {
+      return isSignedIn() && (
+        request.auth.token.get('admin', false) == true ||
+        (
+          exists(/databases/$(database)/documents/adminUsers/$(request.auth.uid)) &&
+          get(/databases/$(database)/documents/adminUsers/$(request.auth.uid)).data.role in ['admin', 'super_admin']
+        )
+      );
+    }
+
+    function hasRequiredFields(fields) {
+      return request.resource.data.keys().hasAll(fields);
+    }
+
+    function hasOnlyAllowedFields(fields) {
+      return request.resource.data.keys().hasOnly(fields);
+    }
+
+    function isNonEmptyString(val, minLen, maxLen) {
+      return val is string && val.size() >= minLen && val.size() <= maxLen;
+    }
+
+    function isValidEmail(email) {
+      return email is string && email.size() <= 160 && email.matches("^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$");
+    }
+
+    function isValidBdPhone(phone) {
+      return phone is string && phone.size() >= 11 && phone.size() <= 16 && phone.matches("^(\\+?880|0)1[3-9][0-9]{8}$");
+    }
+
+    // ===============================================================
+    // Domain Validators
+    // ===============================================================
+
+    function isValidUserProfile(data, uid) {
+      return hasRequiredFields(['uid', 'displayName', 'role', 'createdAt', 'updatedAt']) &&
+        hasOnlyAllowedFields(['uid', 'displayName', 'email', 'role', 'preferredLanguage', 'createdAt', 'updatedAt']) &&
+        data.uid == uid &&
+        isNonEmptyString(data.displayName, 1, 100) &&
+        (!('email' in data) || data.email == '' || isValidEmail(data.email)) &&
+        (!('preferredLanguage' in data) || data.preferredLanguage in ['en', 'bn']) &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidUserPrivate(data, uid) {
+      return hasRequiredFields(['uid', 'updatedAt']) &&
+        hasOnlyAllowedFields(['uid', 'phone', 'defaultAddress', 'district', 'thana', 'postalCode', 'updatedAt']) &&
+        data.uid == uid &&
+        (!('phone' in data) || data.phone == '' || isValidBdPhone(data.phone)) &&
+        (!('defaultAddress' in data) || (data.defaultAddress is string && data.defaultAddress.size() <= 500)) &&
+        (!('district' in data) || (data.district is string && data.district.size() <= 80)) &&
+        (!('thana' in data) || (data.thana is string && data.thana.size() <= 80)) &&
+        (!('postalCode' in data) || (data.postalCode is string && data.postalCode.size() <= 20)) &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidProduct(data, productId) {
+      return hasRequiredFields([
+          'id', 'slug', 'nameEn', 'nameBn', 'category', 'region', 'artisanId',
+          'priceBdt', 'priceMinorUnits', 'currency', 'stockCount', 'reservedStock',
+          'isPublished', 'isDemoData', 'verificationStatus', 'createdAt', 'updatedAt'
+        ]) &&
+        hasOnlyAllowedFields([
+          'id', 'slug', 'nameEn', 'nameBn', 'category', 'region', 'artisanId',
+          'priceBdt', 'priceMinorUnits', 'currency', 'stockCount', 'reservedStock',
+          'isPublished', 'isDemoData', 'verificationStatus', 'createdAt', 'updatedAt',
+          'taglineEn', 'taglineBn', 'descriptionEn', 'descriptionBn', 'craftStoryEn', 'craftStoryBn',
+          'materialsEn', 'materialsBn', 'careEn', 'careBn', 'originEn', 'originBn',
+          'deliveryBdt', 'deliveryEstimateEn', 'deliveryEstimateBn', 'artworkType'
+        ]) &&
+        data.id == productId &&
+        isNonEmptyString(data.slug, 1, 120) &&
+        isNonEmptyString(data.nameEn, 1, 160) &&
+        isNonEmptyString(data.nameBn, 1, 160) &&
+        isNonEmptyString(data.category, 1, 80) &&
+        isNonEmptyString(data.region, 1, 100) &&
+        isNonEmptyString(data.artisanId, 1, 80) &&
+        data.priceBdt is int && data.priceBdt > 0 && data.priceBdt <= 5000000 &&
+        data.priceMinorUnits is int && data.priceMinorUnits == data.priceBdt * 100 &&
+        data.currency == 'BDT' &&
+        data.stockCount is int && data.stockCount >= 0 && data.stockCount <= 100000 &&
+        data.reservedStock is int && data.reservedStock >= 0 &&
+        data.isPublished is bool &&
+        data.isDemoData is bool &&
+        data.verificationStatus in ['verified', 'pending_review', 'demo_only'] &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidProductStockAdjustment() {
+      return request.resource.data.diff(resource.data).affectedKeys().hasOnly(['stockCount', 'reservedStock', 'updatedAt']) &&
+        resource.data.isPublished == true &&
+        resource.data.isDemoData == false &&
+        resource.data.verificationStatus == 'verified' &&
+        request.resource.data.stockCount is int &&
+        request.resource.data.stockCount >= 0 &&
+        request.resource.data.reservedStock is int &&
+        request.resource.data.reservedStock >= 0 &&
+        request.resource.data.updatedAt == request.time;
+    }
+
+    function isValidVariant(data, productId, variantId) {
+      return hasRequiredFields([
+          'id', 'productId', 'sku', 'labelEn', 'labelBn',
+          'priceBdt', 'priceMinorUnits', 'stockCount', 'reservedStock', 'isAvailable', 'updatedAt'
+        ]) &&
+        hasOnlyAllowedFields([
+          'id', 'productId', 'sku', 'labelEn', 'labelBn',
+          'priceBdt', 'priceMinorUnits', 'stockCount', 'reservedStock', 'isAvailable', 'updatedAt'
+        ]) &&
+        data.id == variantId &&
+        data.productId == productId &&
+        isNonEmptyString(data.sku, 1, 80) &&
+        isNonEmptyString(data.labelEn, 1, 100) &&
+        isNonEmptyString(data.labelBn, 1, 100) &&
+        data.priceBdt is int && data.priceBdt > 0 && data.priceBdt <= 5000000 &&
+        data.priceMinorUnits is int && data.priceMinorUnits == data.priceBdt * 100 &&
+        data.stockCount is int && data.stockCount >= 0 && data.stockCount <= 100000 &&
+        data.reservedStock is int && data.reservedStock >= 0 &&
+        data.isAvailable is bool &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidVariantStockAdjustment() {
+      return request.resource.data.diff(resource.data).affectedKeys().hasOnly(['stockCount', 'reservedStock', 'isAvailable', 'updatedAt']) &&
+        request.resource.data.stockCount is int &&
+        request.resource.data.stockCount >= 0 &&
+        request.resource.data.reservedStock is int &&
+        request.resource.data.reservedStock >= 0 &&
+        request.resource.data.isAvailable == (request.resource.data.stockCount > 0) &&
+        request.resource.data.updatedAt == request.time;
+    }
+
+    function isValidArtisan(data, artisanId) {
+      return hasRequiredFields([
+          'id', 'nameEn', 'nameBn', 'community', 'region', 'specialty',
+          'isVerified', 'isPublished', 'isDemoData', 'updatedAt'
+        ]) &&
+        hasOnlyAllowedFields([
+          'id', 'nameEn', 'nameBn', 'community', 'region', 'specialty',
+          'isVerified', 'isPublished', 'isDemoData', 'updatedAt',
+          'bioEn', 'bioBn', 'experienceYears', 'quoteEn', 'quoteBn'
+        ]) &&
+        data.id == artisanId &&
+        isNonEmptyString(data.nameEn, 1, 140) &&
+        isNonEmptyString(data.nameBn, 1, 140) &&
+        isNonEmptyString(data.community, 1, 120) &&
+        isNonEmptyString(data.region, 1, 120) &&
+        isNonEmptyString(data.specialty, 1, 160) &&
+        data.isVerified is bool &&
+        data.isPublished is bool &&
+        data.isDemoData is bool &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidOrderCreate(data, orderId) {
+      return hasRequiredFields([
+          'id', 'orderReference', 'idempotencyKey', 'customerUid',
+          'customerName', 'customerPhone', 'shippingAddress', 'district', 'thana',
+          'deliveryZone', 'paymentMethod', 'paymentStatus', 'orderStatus',
+          'subtotalMinorUnits', 'shippingMinorUnits', 'totalMinorUnits',
+          'subtotalBdt', 'shippingBdt', 'totalBdt', 'itemCount', 'currency',
+          'createdAt', 'updatedAt'
+        ]) &&
+        hasOnlyAllowedFields([
+          'id', 'orderReference', 'idempotencyKey', 'customerUid',
+          'customerName', 'customerPhone', 'customerEmail', 'shippingAddress',
+          'district', 'thana', 'postalCode', 'deliveryInstructions',
+          'deliveryZone', 'paymentMethod', 'paymentStatus', 'orderStatus',
+          'subtotalMinorUnits', 'shippingMinorUnits', 'totalMinorUnits',
+          'subtotalBdt', 'shippingBdt', 'totalBdt', 'itemCount', 'currency',
+          'createdAt', 'updatedAt'
+        ]) &&
+        data.id == orderId &&
+        isNonEmptyString(data.orderReference, 6, 40) &&
+        isNonEmptyString(data.idempotencyKey, 8, 100) &&
+        data.customerUid == request.auth.uid &&
+        isNonEmptyString(data.customerName, 2, 120) &&
+        isValidBdPhone(data.customerPhone) &&
+        (!('customerEmail' in data) || data.customerEmail == '' || isValidEmail(data.customerEmail)) &&
+        isNonEmptyString(data.shippingAddress, 5, 400) &&
+        isNonEmptyString(data.district, 2, 80) &&
+        isNonEmptyString(data.thana, 2, 80) &&
+        (!('postalCode' in data) || (data.postalCode is string && data.postalCode.size() <= 20)) &&
+        (!('deliveryInstructions' in data) || (data.deliveryInstructions is string && data.deliveryInstructions.size() <= 500)) &&
+        data.deliveryZone in ['dhaka_metro', 'outside_dhaka'] &&
+        data.paymentMethod == 'COD' &&
+        data.paymentStatus == 'unpaid_cod' &&
+        data.orderStatus == 'pending_verification' &&
+        data.subtotalBdt is int && data.subtotalBdt > 0 && data.subtotalBdt <= 50000000 &&
+        data.shippingBdt is int && data.shippingBdt in [80, 150] &&
+        data.totalBdt is int && data.totalBdt == data.subtotalBdt + data.shippingBdt &&
+        data.subtotalMinorUnits is int && data.subtotalMinorUnits == data.subtotalBdt * 100 &&
+        data.shippingMinorUnits is int && data.shippingMinorUnits == data.shippingBdt * 100 &&
+        data.totalMinorUnits is int && data.totalMinorUnits == data.subtotalMinorUnits + data.shippingMinorUnits &&
+        data.itemCount is int && data.itemCount >= 1 && data.itemCount <= 50 &&
+        data.currency == 'BDT' &&
+        data.createdAt == request.time &&
+        data.updatedAt == request.time;
+    }
+
+    function isValidCustomerOrderCancel() {
+      return isOwner(resource.data.customerUid) &&
+        resource.data.orderStatus == 'pending_verification' &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['orderStatus', 'updatedAt']) &&
+        request.resource.data.orderStatus == 'cancelled' &&
+        request.resource.data.updatedAt == request.time;
+    }
+
+    function isValidOrderItemCreate(data, orderId, itemId) {
+      let productDoc = get(/databases/$(database)/documents/products/$(data.productId));
+      let variantDoc = get(/databases/$(database)/documents/products/$(data.productId)/variants/$(data.variantId));
+      return hasRequiredFields([
+          'id', 'orderId', 'customerUid', 'productId', 'variantId', 'sku',
+          'productNameEn', 'variantLabelEn', 'quantity', 'unitPriceBdt',
+          'unitPriceMinorUnits', 'lineTotalMinorUnits'
+        ]) &&
+        hasOnlyAllowedFields([
+          'id', 'orderId', 'customerUid', 'productId', 'variantId', 'sku',
+          'productNameEn', 'variantLabelEn', 'quantity', 'unitPriceBdt',
+          'unitPriceMinorUnits', 'lineTotalMinorUnits'
+        ]) &&
+        data.id == itemId &&
+        data.orderId == orderId &&
+        data.customerUid == request.auth.uid &&
+        data.quantity is int && data.quantity >= 1 && data.quantity <= 20 &&
+        productDoc != null &&
+        productDoc.data.isPublished == true &&
+        productDoc.data.isDemoData == false &&
+        productDoc.data.verificationStatus == 'verified' &&
+        variantDoc != null &&
+        variantDoc.data.sku == data.sku &&
+        data.unitPriceBdt == variantDoc.data.priceBdt &&
+        data.unitPriceMinorUnits == variantDoc.data.priceMinorUnits &&
+        data.lineTotalMinorUnits == data.unitPriceMinorUnits * data.quantity;
+    }
+
+    function isValidStatusEventCreate(data, eventId) {
+      return hasRequiredFields([
+          'id', 'orderId', 'customerUid', 'previousStatus', 'newStatus',
+          'actorUid', 'actorRole', 'note', 'createdAt'
+        ]) &&
+        hasOnlyAllowedFields([
+          'id', 'orderId', 'customerUid', 'previousStatus', 'newStatus',
+          'actorUid', 'actorRole', 'note', 'createdAt'
+        ]) &&
+        data.id == eventId &&
+        isNonEmptyString(data.orderId, 4, 80) &&
+        data.actorUid == request.auth.uid &&
+        data.previousStatus in ['none', 'pending_verification', 'confirmed', 'packed', 'shipped', 'delivered', 'cancelled'] &&
+        data.newStatus in ['pending_verification', 'confirmed', 'packed', 'shipped', 'delivered', 'cancelled'] &&
+        isNonEmptyString(data.note, 1, 400) &&
+        data.createdAt == request.time &&
+        (
+          (data.actorRole == 'customer' && data.customerUid == request.auth.uid && data.newStatus in ['pending_verification', 'cancelled']) ||
+          (data.actorRole == 'admin' && isAdmin())
+        );
+    }
+
+    // ===============================================================
+    // Collection Match Rules
+    // ===============================================================
+
+    // Connectivity health check path
+    match /test/connection {
+      allow get: if true;
+      allow list, write: if false;
+    }
+
+    // Users public profile (scoped strictly to owner or verified admin)
+    match /users/{uid} {
+      allow get: if isValidId(uid) && (isOwner(uid) || isAdmin());
+      allow list: if isAdmin();
+      allow create: if isOwner(uid) &&
+        isValidUserProfile(request.resource.data, uid) &&
+        request.resource.data.role == 'customer' &&
+        request.resource.data.createdAt == request.time &&
+        request.resource.data.updatedAt == request.time;
+      allow update: if (isOwner(uid) || isAdmin()) &&
+        isValidUserProfile(request.resource.data, uid) &&
+        request.resource.data.uid == resource.data.uid &&
+        request.resource.data.createdAt == resource.data.createdAt &&
+        (request.resource.data.role == resource.data.role || isAdmin()) &&
+        request.resource.data.updatedAt == request.time;
+      allow delete: if isAdmin();
+
+      // Private PII subcollection (strictly owner or verified admin)
+      match /private/{docId} {
+        allow get, list: if isOwner(uid) || isAdmin();
+        allow create, update: if isOwner(uid) &&
+          isValidUserPrivate(request.resource.data, uid) &&
+          request.resource.data.updatedAt == request.time;
+        allow delete: if isOwner(uid) || isAdmin();
+      }
+    }
+
+    // Products catalog
+    match /products/{productId} {
+      allow get: if isValidId(productId) && ((
+        resource.data.isPublished == true &&
+        resource.data.isDemoData == false &&
+        resource.data.verificationStatus == 'verified'
+      ) || isAdmin());
+      allow list: if (
+        resource.data.isPublished == true &&
+        resource.data.isDemoData == false &&
+        resource.data.verificationStatus == 'verified'
+      ) || isAdmin();
+      allow create: if isAdmin() && isValidId(productId) && isValidProduct(request.resource.data, productId);
+      allow update: if (isAdmin() && isValidId(productId) && isValidProduct(request.resource.data, productId) && request.resource.data.createdAt == resource.data.createdAt) ||
+        (isSignedIn() && isValidProductStockAdjustment());
+      allow delete: if isAdmin();
+
+      // Product variants
+      match /variants/{variantId} {
+        allow get: if isValidId(variantId) && ((
+          get(/databases/$(database)/documents/products/$(productId)).data.isPublished == true &&
+          get(/databases/$(database)/documents/products/$(productId)).data.isDemoData == false &&
+          get(/databases/$(database)/documents/products/$(productId)).data.verificationStatus == 'verified'
+        ) || isAdmin());
+        allow list: if (
+          get(/databases/$(database)/documents/products/$(productId)).data.isPublished == true &&
+          get(/databases/$(database)/documents/products/$(productId)).data.isDemoData == false &&
+          get(/databases/$(database)/documents/products/$(productId)).data.verificationStatus == 'verified'
+        ) || isAdmin();
+        allow create: if isAdmin() && isValidId(variantId) && isValidVariant(request.resource.data, productId, variantId);
+        allow update: if (isAdmin() && isValidId(variantId) && isValidVariant(request.resource.data, productId, variantId)) ||
+          (isSignedIn() && isValidVariantStockAdjustment());
+        allow delete: if isAdmin();
+      }
+    }
+
+    // Artisans directory
+    match /artisans/{artisanId} {
+      allow get: if isValidId(artisanId) && ((
+        resource.data.isPublished == true &&
+        resource.data.isDemoData == false &&
+        resource.data.isVerified == true
+      ) || isAdmin());
+      allow list: if (
+        resource.data.isPublished == true &&
+        resource.data.isDemoData == false &&
+        resource.data.isVerified == true
+      ) || isAdmin();
+      allow create, update: if isAdmin() && isValidId(artisanId) && isValidArtisan(request.resource.data, artisanId);
+      allow delete: if isAdmin();
+    }
+
+    // Orders (strictly accessible only to the customer owner or verified admin)
+    match /orders/{orderId} {
+      allow get: if isValidId(orderId) && isSignedIn() && (resource.data.customerUid == request.auth.uid || isAdmin());
+      allow list: if isSignedIn() && (resource.data.customerUid == request.auth.uid || isAdmin());
+      allow create: if isSignedIn() && isValidId(orderId) && isValidOrderCreate(request.resource.data, orderId);
+      allow update: if isValidCustomerOrderCancel() || (
+        isAdmin() &&
+        request.resource.data.id == resource.data.id &&
+        request.resource.data.orderReference == resource.data.orderReference &&
+        request.resource.data.idempotencyKey == resource.data.idempotencyKey &&
+        request.resource.data.customerUid == resource.data.customerUid &&
+        request.resource.data.createdAt == resource.data.createdAt &&
+        request.resource.data.paymentMethod == 'COD' &&
+        request.resource.data.paymentStatus in ['unpaid_cod', 'collected_cod', 'refunded'] &&
+        request.resource.data.orderStatus in ['pending_verification', 'confirmed', 'packed', 'shipped', 'delivered', 'cancelled'] &&
+        request.resource.data.updatedAt == request.time
+      );
+      allow delete: if false;
+
+      // Order line items (immutable)
+      match /items/{itemId} {
+        allow get: if isValidId(itemId) && isSignedIn() && (resource.data.customerUid == request.auth.uid || isAdmin());
+        allow list: if isSignedIn() && (resource.data.customerUid == request.auth.uid || isAdmin());
+        allow create: if isSignedIn() && isValidId(itemId) && isValidOrderItemCreate(request.resource.data, orderId, itemId);
+        allow update, delete: if false;
+      }
+    }
+
+    // Order status audit events (append-only)
+    match /orderStatusEvents/{eventId} {
+      allow get: if isValidId(eventId) && isSignedIn() && (resource.data.customerUid == request.auth.uid || isAdmin());
+      allow list: if isSignedIn() && (resource.data.customerUid == request.auth.uid || isAdmin());
+      allow create: if isSignedIn() && isValidId(eventId) && isValidStatusEventCreate(request.resource.data, eventId);
+      allow update, delete: if false;
+    }
+
+    // Admin role registry (Clients can NEVER modify admin roles directly)
+    match /adminUsers/{uid} {
+      allow get: if isValidId(uid) && isSignedIn() && (request.auth.uid == uid || isAdmin());
+      allow list: if isAdmin();
+      allow create, update, delete: if false; // Must be modified solely through trusted Cloud Functions / Admin SDK
+    }
+  }
+}

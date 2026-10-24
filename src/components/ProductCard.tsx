@@ -26,8 +26,19 @@ export const ProductCard: React.FC<ProductCardProps> = ({
   onQuickView,
   onAddToCart,
 }) => {
-  const defaultVariant = product.variants[0]?.id || 'default';
+  const firstInStockVariant =
+    product.variants.find((v) => v.inStock && (v.stockCount ?? 1) > 0) || product.variants[0];
+  const defaultVariantId = firstInStockVariant?.id || 'default';
   const isAvailableInMarket = product.availableMarkets.includes(market);
+
+  const totalStock =
+    typeof product.stockCount === 'number'
+      ? product.stockCount
+      : product.variants.reduce((acc, v) => acc + (v.stockCount ?? (v.inStock ? 5 : 0)), 0);
+
+  const isOutOfStock = totalStock <= 0 || !product.variants.some((v) => v.inStock);
+  const isVerifiedLive =
+    !product.isDemoData && product.isPublished && product.verificationStatus === 'verified';
 
   return (
     <article
@@ -73,13 +84,19 @@ export const ProductCard: React.FC<ProductCardProps> = ({
         <div className="pt-3 pb-2 space-y-1">
           <div className="flex items-center flex-wrap gap-1.5 text-xs text-[#8a4b2a]">
             <span>{product.category}</span>
-            {product.statusLabel && (
-              <>
-                <span aria-hidden="true">·</span>
-                <span className="font-semibold text-[#5d7a4a]">
-                  {tText(product.statusLabel, language)}
-                </span>
-              </>
+            <span aria-hidden="true">·</span>
+            {isOutOfStock ? (
+              <span className="font-bold text-[#b5502d]">
+                {language === 'bn' ? 'স্টকে নেই' : 'Out of Stock'}
+              </span>
+            ) : isVerifiedLive ? (
+              <span className="font-semibold text-[#5d7a4a]">
+                {language === 'bn' ? `যাচাইকৃত · ${totalStock}টি স্টকে` : `Verified · ${totalStock} in stock`}
+              </span>
+            ) : (
+              <span className="text-[#8a4b2a]/85">
+                {product.statusLabel ? tText(product.statusLabel, language) : 'Demo Preview'}
+              </span>
             )}
           </div>
 
@@ -108,10 +125,19 @@ export const ProductCard: React.FC<ProductCardProps> = ({
 
         <button
           type="button"
-          onClick={(e) => onAddToCart(product.id, defaultVariant, 1, e)}
-          className="px-3 py-1 text-xs border border-[#8a4b2a] text-[#8a4b2a] bg-[#f6ecd4] hover:bg-[#8a4b2a] hover:text-[#fff3dc] transition-colors whitespace-nowrap shrink-0 cursor-pointer"
+          disabled={isOutOfStock}
+          onClick={(e) => onAddToCart(product.id, defaultVariantId, 1, e)}
+          className={`px-3 py-1 text-xs border transition-colors whitespace-nowrap shrink-0 ${
+            isOutOfStock
+              ? 'border-[#8a4b2a]/40 text-[#3b2a1a]/45 bg-[#e4d3ad]/60 cursor-not-allowed'
+              : 'border-[#8a4b2a] text-[#8a4b2a] bg-[#f6ecd4] hover:bg-[#8a4b2a] hover:text-[#fff3dc] cursor-pointer'
+          }`}
         >
-          {tText(UI_STRINGS.addToBag, language)}
+          {isOutOfStock
+            ? language === 'bn'
+              ? 'স্টকে নেই'
+              : 'Out of Stock'
+            : tText(UI_STRINGS.addToBag, language)}
         </button>
       </div>
     </article>

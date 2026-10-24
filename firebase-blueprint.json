@@ -1,0 +1,872 @@
+{
+  "entities": {
+    "UserPublicProfile": {
+      "title": "UserPublicProfile",
+      "description": "Non-PII customer profile metadata stored at /users/{uid}.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "description": "Firebase Auth UID of the user.",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "displayName": {
+          "type": "string",
+          "description": "Customer display name.",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Creation server timestamp."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Last update server timestamp."
+        }
+      },
+      "required": ["uid", "displayName", "createdAt", "updatedAt"]
+    },
+    "UserPrivateInfo": {
+      "title": "UserPrivateInfo",
+      "description": "Isolated PII customer contact and default Bangladesh delivery address stored at /users/{uid}/private/{docId}.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "description": "Owner Firebase Auth UID.",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "email": {
+          "type": "string",
+          "format": "email",
+          "description": "Customer email address.",
+          "minLength": 3,
+          "maxLength": 160
+        },
+        "phone": {
+          "type": "string",
+          "description": "Customer phone number.",
+          "minLength": 6,
+          "maxLength": 32
+        },
+        "defaultAddress": {
+          "type": "string",
+          "description": "Default street delivery address.",
+          "minLength": 3,
+          "maxLength": 300
+        },
+        "defaultCity": {
+          "type": "string",
+          "description": "Default city or district in Bangladesh.",
+          "minLength": 2,
+          "maxLength": 80
+        },
+        "defaultPostalCode": {
+          "type": "string",
+          "description": "Default postal code.",
+          "minLength": 3,
+          "maxLength": 20
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp of update."
+        }
+      },
+      "required": ["uid", "email", "phone", "defaultAddress", "defaultCity", "defaultPostalCode", "updatedAt"]
+    },
+    "ProductDocument": {
+      "title": "ProductDocument",
+      "description": "Catalog product record in /products/{productId} supporting bilingual content and verification status.",
+      "type": "object",
+      "properties": {
+        "slug": {
+          "type": "string",
+          "description": "URL-friendly product slug.",
+          "minLength": 2,
+          "maxLength": 120,
+          "pattern": "^[a-z0-9\\-]+$"
+        },
+        "nameEn": {
+          "type": "string",
+          "description": "Product name in English.",
+          "minLength": 2,
+          "maxLength": 160
+        },
+        "nameBn": {
+          "type": "string",
+          "description": "Product name in Bangla.",
+          "minLength": 2,
+          "maxLength": 200
+        },
+        "descriptionEn": {
+          "type": "string",
+          "description": "Short product description in English.",
+          "minLength": 5,
+          "maxLength": 1200
+        },
+        "descriptionBn": {
+          "type": "string",
+          "description": "Short product description in Bangla.",
+          "minLength": 5,
+          "maxLength": 1500
+        },
+        "category": {
+          "type": "string",
+          "description": "Craft category.",
+          "enum": [
+            "Nakshi Kantha",
+            "Jamdani & Weaving",
+            "Pottery & Terracotta",
+            "Cane & Bamboo",
+            "Jewelry & Metalwork",
+            "Folk Art & Home",
+            "Traditional Instruments",
+            "Indigenous Crafts"
+          ]
+        },
+        "useCase": {
+          "type": "string",
+          "description": "Primary product use case.",
+          "minLength": 2,
+          "maxLength": 80
+        },
+        "artisanId": {
+          "type": "string",
+          "description": "Reference ID of the artisan or collective.",
+          "minLength": 2,
+          "maxLength": 100,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "artisanNameEn": {
+          "type": "string",
+          "description": "Artisan display name in English.",
+          "minLength": 2,
+          "maxLength": 160
+        },
+        "artisanNameBn": {
+          "type": "string",
+          "description": "Artisan display name in Bangla.",
+          "minLength": 2,
+          "maxLength": 200
+        },
+        "originRegion": {
+          "type": "string",
+          "description": "Village and district origin.",
+          "minLength": 2,
+          "maxLength": 120
+        },
+        "originCountryCode": {
+          "type": "string",
+          "description": "ISO country code or heritage tag.",
+          "enum": ["BD", "IN", "SHARED"]
+        },
+        "materialsEn": {
+          "type": "string",
+          "description": "Materials description in English.",
+          "minLength": 2,
+          "maxLength": 500
+        },
+        "materialsBn": {
+          "type": "string",
+          "description": "Materials description in Bangla.",
+          "minLength": 2,
+          "maxLength": 600
+        },
+        "dimensions": {
+          "type": "string",
+          "description": "Physical dimensions of the craft piece.",
+          "minLength": 2,
+          "maxLength": 160
+        },
+        "makingTimeEn": {
+          "type": "string",
+          "description": "Crafting duration in English.",
+          "minLength": 2,
+          "maxLength": 120
+        },
+        "makingTimeBn": {
+          "type": "string",
+          "description": "Crafting duration in Bangla.",
+          "minLength": 2,
+          "maxLength": 160
+        },
+        "culturalContextEn": {
+          "type": "string",
+          "description": "Cultural significance and how it is made in English.",
+          "minLength": 10,
+          "maxLength": 2500
+        },
+        "culturalContextBn": {
+          "type": "string",
+          "description": "Cultural significance and how it is made in Bangla.",
+          "minLength": 10,
+          "maxLength": 3000
+        },
+        "careInstructionsEn": {
+          "type": "string",
+          "description": "Care instructions in English.",
+          "minLength": 5,
+          "maxLength": 800
+        },
+        "careInstructionsBn": {
+          "type": "string",
+          "description": "Care instructions in Bangla.",
+          "minLength": 5,
+          "maxLength": 1000
+        },
+        "artworkIndex": {
+          "type": "integer",
+          "description": "Archival SVG plate index."
+        },
+        "priceBdt": {
+          "type": "integer",
+          "description": "Authoritative base price in BDT."
+        },
+        "pricePoisha": {
+          "type": "integer",
+          "description": "Authoritative base price in integer BDT poisha (1 BDT = 100 poisha)."
+        },
+        "priceInr": {
+          "type": "integer",
+          "description": "Reference price in INR."
+        },
+        "stockQuantity": {
+          "type": "integer",
+          "description": "Total available stock across active variants."
+        },
+        "isDemoData": {
+          "type": "boolean",
+          "description": "True if this record is demonstration data not eligible for live purchase."
+        },
+        "isPublished": {
+          "type": "boolean",
+          "description": "True if published to the storefront."
+        },
+        "verificationStatus": {
+          "type": "string",
+          "description": "Verification status of product provenance and stock.",
+          "enum": ["demo_only", "pending_verification", "verified"]
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Creation server timestamp."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Last update server timestamp."
+        }
+      },
+      "required": [
+        "slug",
+        "nameEn",
+        "nameBn",
+        "descriptionEn",
+        "descriptionBn",
+        "category",
+        "useCase",
+        "artisanId",
+        "artisanNameEn",
+        "artisanNameBn",
+        "originRegion",
+        "originCountryCode",
+        "materialsEn",
+        "materialsBn",
+        "dimensions",
+        "makingTimeEn",
+        "makingTimeBn",
+        "culturalContextEn",
+        "culturalContextBn",
+        "careInstructionsEn",
+        "careInstructionsBn",
+        "artworkIndex",
+        "priceBdt",
+        "pricePoisha",
+        "priceInr",
+        "stockQuantity",
+        "isDemoData",
+        "isPublished",
+        "verificationStatus",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "ProductVariantDocument": {
+      "title": "ProductVariantDocument",
+      "description": "Variant inventory and pricing record in /products/{productId}/variants/{variantId}.",
+      "type": "object",
+      "properties": {
+        "productId": {
+          "type": "string",
+          "description": "Parent product document ID.",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "sku": {
+          "type": "string",
+          "description": "Variant SKU code.",
+          "minLength": 2,
+          "maxLength": 64
+        },
+        "labelEn": {
+          "type": "string",
+          "description": "Variant label in English.",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "labelBn": {
+          "type": "string",
+          "description": "Variant label in Bangla.",
+          "minLength": 1,
+          "maxLength": 160
+        },
+        "colorHex": {
+          "type": "string",
+          "description": "Hex color swatch.",
+          "minLength": 4,
+          "maxLength": 16
+        },
+        "priceBdt": {
+          "type": "integer",
+          "description": "Authoritative variant price in BDT."
+        },
+        "pricePoisha": {
+          "type": "integer",
+          "description": "Authoritative variant price in BDT poisha."
+        },
+        "priceInr": {
+          "type": "integer",
+          "description": "Reference variant price in INR."
+        },
+        "stockQuantity": {
+          "type": "integer",
+          "description": "Authoritative available stock count for this variant."
+        },
+        "isActive": {
+          "type": "boolean",
+          "description": "Whether this variant is active for purchase."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Last stock or price update server timestamp."
+        }
+      },
+      "required": [
+        "productId",
+        "sku",
+        "labelEn",
+        "labelBn",
+        "colorHex",
+        "priceBdt",
+        "pricePoisha",
+        "priceInr",
+        "stockQuantity",
+        "isActive",
+        "updatedAt"
+      ]
+    },
+    "ArtisanDocument": {
+      "title": "ArtisanDocument",
+      "description": "Artisan or Indigenous collective profile in /artisans/{artisanId} with consent controls.",
+      "type": "object",
+      "properties": {
+        "nameEn": {
+          "type": "string",
+          "description": "Maker or collective name in English.",
+          "minLength": 2,
+          "maxLength": 160
+        },
+        "nameBn": {
+          "type": "string",
+          "description": "Maker or collective name in Bangla.",
+          "minLength": 2,
+          "maxLength": 200
+        },
+        "biographyEn": {
+          "type": "string",
+          "description": "Biography in English.",
+          "minLength": 10,
+          "maxLength": 2000
+        },
+        "biographyBn": {
+          "type": "string",
+          "description": "Biography in Bangla.",
+          "minLength": 10,
+          "maxLength": 2500
+        },
+        "craftSpecialization": {
+          "type": "string",
+          "description": "Primary craft specialization.",
+          "minLength": 2,
+          "maxLength": 100
+        },
+        "locationEn": {
+          "type": "string",
+          "description": "Region and district in English.",
+          "minLength": 2,
+          "maxLength": 160
+        },
+        "locationBn": {
+          "type": "string",
+          "description": "Region and district in Bangla.",
+          "minLength": 2,
+          "maxLength": 200
+        },
+        "verificationStatus": {
+          "type": "string",
+          "description": "Consent and field verification state.",
+          "enum": ["demo_profile", "pending_consent", "verified"]
+        },
+        "consentToPublish": {
+          "type": "boolean",
+          "description": "True only when explicit artisan or community consent is on file."
+        },
+        "isPublished": {
+          "type": "boolean",
+          "description": "True if publicly visible."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Last updated timestamp."
+        }
+      },
+      "required": [
+        "nameEn",
+        "nameBn",
+        "biographyEn",
+        "biographyBn",
+        "craftSpecialization",
+        "locationEn",
+        "locationBn",
+        "verificationStatus",
+        "consentToPublish",
+        "isPublished",
+        "updatedAt"
+      ]
+    },
+    "OrderDocument": {
+      "title": "OrderDocument",
+      "description": "Customer order record in /orders/{orderId} with integer poisha monetary fields and COD status tracking.",
+      "type": "object",
+      "properties": {
+        "publicOrderNumber": {
+          "type": "string",
+          "description": "Human-readable order reference (e.g. ROB-2026-8491).",
+          "minLength": 6,
+          "maxLength": 40,
+          "pattern": "^[A-Z0-9\\-]+$"
+        },
+        "customerUid": {
+          "type": "string",
+          "description": "Authenticated customer UID.",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "idempotencyKey": {
+          "type": "string",
+          "description": "Client-generated idempotency key to prevent duplicate submissions.",
+          "minLength": 8,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "customerName": {
+          "type": "string",
+          "description": "Recipient full name.",
+          "minLength": 2,
+          "maxLength": 120
+        },
+        "customerPhone": {
+          "type": "string",
+          "description": "Bangladesh mobile number.",
+          "minLength": 6,
+          "maxLength": 24
+        },
+        "customerEmail": {
+          "type": "string",
+          "description": "Customer email for order communication.",
+          "minLength": 3,
+          "maxLength": 160
+        },
+        "deliveryAddress": {
+          "type": "string",
+          "description": "Full delivery street, house, and area address.",
+          "minLength": 5,
+          "maxLength": 350
+        },
+        "cityOrDistrict": {
+          "type": "string",
+          "description": "Bangladesh district or city.",
+          "minLength": 2,
+          "maxLength": 80
+        },
+        "postalCode": {
+          "type": "string",
+          "description": "Bangladesh 4-digit postcode.",
+          "minLength": 3,
+          "maxLength": 20
+        },
+        "customerNotes": {
+          "type": "string",
+          "description": "Optional delivery instructions.",
+          "minLength": 0,
+          "maxLength": 500
+        },
+        "market": {
+          "type": "string",
+          "description": "Target commerce market.",
+          "enum": ["BD"]
+        },
+        "currencyCode": {
+          "type": "string",
+          "description": "ISO currency code.",
+          "enum": ["BDT"]
+        },
+        "itemCount": {
+          "type": "integer",
+          "description": "Total number of units in the order."
+        },
+        "itemsSummary": {
+          "type": "string",
+          "description": "Concise human-readable summary of ordered items.",
+          "minLength": 2,
+          "maxLength": 600
+        },
+        "subtotalPoisha": {
+          "type": "integer",
+          "description": "Authoritative subtotal in BDT poisha (1 BDT = 100 poisha)."
+        },
+        "shippingPoisha": {
+          "type": "integer",
+          "description": "Authoritative shipping fee in BDT poisha."
+        },
+        "discountPoisha": {
+          "type": "integer",
+          "description": "Authoritative discount in BDT poisha."
+        },
+        "totalPoisha": {
+          "type": "integer",
+          "description": "Authoritative grand total in BDT poisha."
+        },
+        "subtotalBdt": {
+          "type": "integer",
+          "description": "Authoritative subtotal in integer BDT."
+        },
+        "shippingBdt": {
+          "type": "integer",
+          "description": "Authoritative shipping fee in integer BDT."
+        },
+        "discountBdt": {
+          "type": "integer",
+          "description": "Authoritative discount in integer BDT."
+        },
+        "totalBdt": {
+          "type": "integer",
+          "description": "Authoritative grand total in integer BDT."
+        },
+        "orderStatus": {
+          "type": "string",
+          "description": "Order fulfillment lifecycle state.",
+          "enum": [
+            "pending_verification",
+            "confirmed",
+            "packed",
+            "shipped",
+            "delivered",
+            "cancelled"
+          ]
+        },
+        "paymentMethod": {
+          "type": "string",
+          "description": "Selected payment method.",
+          "enum": ["COD"]
+        },
+        "paymentStatus": {
+          "type": "string",
+          "description": "Payment settlement state (COD orders start as unpaid_cod).",
+          "enum": ["unpaid_cod", "cod_collected", "refunded", "cancelled"]
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Order creation server timestamp."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Order update server timestamp."
+        }
+      },
+      "required": [
+        "publicOrderNumber",
+        "customerUid",
+        "idempotencyKey",
+        "customerName",
+        "customerPhone",
+        "customerEmail",
+        "deliveryAddress",
+        "cityOrDistrict",
+        "postalCode",
+        "customerNotes",
+        "market",
+        "currencyCode",
+        "itemCount",
+        "itemsSummary",
+        "subtotalPoisha",
+        "shippingPoisha",
+        "discountPoisha",
+        "totalPoisha",
+        "subtotalBdt",
+        "shippingBdt",
+        "discountBdt",
+        "totalBdt",
+        "orderStatus",
+        "paymentMethod",
+        "paymentStatus",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "OrderItemDocument": {
+      "title": "OrderItemDocument",
+      "description": "Immutable line-item snapshot stored in /orders/{orderId}/items/{itemId}.",
+      "type": "object",
+      "properties": {
+        "orderId": {
+          "type": "string",
+          "description": "Parent order ID.",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "customerUid": {
+          "type": "string",
+          "description": "Authenticated customer UID matching parent order.",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "productId": {
+          "type": "string",
+          "description": "Purchased product ID.",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "variantId": {
+          "type": "string",
+          "description": "Purchased variant ID.",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "productNameSnapshot": {
+          "type": "string",
+          "description": "Snapshot of product name at purchase time.",
+          "minLength": 2,
+          "maxLength": 200
+        },
+        "variantLabelSnapshot": {
+          "type": "string",
+          "description": "Snapshot of variant label at purchase time.",
+          "minLength": 1,
+          "maxLength": 160
+        },
+        "unitPricePoisha": {
+          "type": "integer",
+          "description": "Authoritative unit price in poisha."
+        },
+        "unitPriceBdt": {
+          "type": "integer",
+          "description": "Authoritative unit price in BDT."
+        },
+        "quantity": {
+          "type": "integer",
+          "description": "Purchased quantity (1 to 20)."
+        },
+        "lineTotalPoisha": {
+          "type": "integer",
+          "description": "Line total in poisha (unitPricePoisha * quantity)."
+        },
+        "lineTotalBdt": {
+          "type": "integer",
+          "description": "Line total in BDT."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Creation server timestamp."
+        }
+      },
+      "required": [
+        "orderId",
+        "customerUid",
+        "productId",
+        "variantId",
+        "productNameSnapshot",
+        "variantLabelSnapshot",
+        "unitPricePoisha",
+        "unitPriceBdt",
+        "quantity",
+        "lineTotalPoisha",
+        "lineTotalBdt",
+        "createdAt"
+      ]
+    },
+    "OrderStatusEventDocument": {
+      "title": "OrderStatusEventDocument",
+      "description": "Audit log entry for order status transitions in /orderStatusEvents/{eventId}.",
+      "type": "object",
+      "properties": {
+        "orderId": {
+          "type": "string",
+          "description": "Target order ID.",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "customerUid": {
+          "type": "string",
+          "description": "Customer UID owning the order.",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "previousStatus": {
+          "type": "string",
+          "description": "Previous order status.",
+          "enum": [
+            "none",
+            "pending_verification",
+            "confirmed",
+            "packed",
+            "shipped",
+            "delivered",
+            "cancelled"
+          ]
+        },
+        "newStatus": {
+          "type": "string",
+          "description": "New order status.",
+          "enum": [
+            "pending_verification",
+            "confirmed",
+            "packed",
+            "shipped",
+            "delivered",
+            "cancelled"
+          ]
+        },
+        "timestamp": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Transition server timestamp."
+        },
+        "authorizedActorId": {
+          "type": "string",
+          "description": "UID of customer or admin performing the transition.",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "note": {
+          "type": "string",
+          "description": "Reason or note for transition.",
+          "minLength": 1,
+          "maxLength": 400
+        }
+      },
+      "required": [
+        "orderId",
+        "customerUid",
+        "previousStatus",
+        "newStatus",
+        "timestamp",
+        "authorizedActorId",
+        "note"
+      ]
+    },
+    "AdminUserDocument": {
+      "title": "AdminUserDocument",
+      "description": "Administrative role registry at /adminUsers/{uid}, writable only by existing admins.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "description": "Admin user UID.",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "email": {
+          "type": "string",
+          "format": "email",
+          "description": "Verified admin email.",
+          "minLength": 3,
+          "maxLength": 160
+        },
+        "role": {
+          "type": "string",
+          "description": "Admin role level.",
+          "enum": ["super_admin", "catalog_manager", "fulfillment_manager"]
+        },
+        "grantedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when admin access was granted."
+        }
+      },
+      "required": ["uid", "email", "role", "grantedAt"]
+    }
+  },
+  "firestore": {
+    "/users/{uid}": {
+      "schema": { "$ref": "#/entities/UserPublicProfile" },
+      "description": "Customer display profile."
+    },
+    "/users/{uid}/private/{docId}": {
+      "schema": { "$ref": "#/entities/UserPrivateInfo" },
+      "description": "Customer private PII contact and delivery defaults."
+    },
+    "/products/{productId}": {
+      "schema": { "$ref": "#/entities/ProductDocument" },
+      "description": "Catalog products."
+    },
+    "/products/{productId}/variants/{variantId}": {
+      "schema": { "$ref": "#/entities/ProductVariantDocument" },
+      "description": "Product variants and stock quantities."
+    },
+    "/artisans/{artisanId}": {
+      "schema": { "$ref": "#/entities/ArtisanDocument" },
+      "description": "Artisan and Indigenous community profiles."
+    },
+    "/orders/{orderId}": {
+      "schema": { "$ref": "#/entities/OrderDocument" },
+      "description": "Customer orders."
+    },
+    "/orders/{orderId}/items/{itemId}": {
+      "schema": { "$ref": "#/entities/OrderItemDocument" },
+      "description": "Order line item snapshots."
+    },
+    "/orderStatusEvents/{eventId}": {
+      "schema": { "$ref": "#/entities/OrderStatusEventDocument" },
+      "description": "Order status transition audit trail."
+    },
+    "/adminUsers/{uid}": {
+      "schema": { "$ref": "#/entities/AdminUserDocument" },
+      "description": "Trusted administrator registry."
+    }
+  }
+}

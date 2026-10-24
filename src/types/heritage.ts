@@ -32,15 +32,23 @@ export type RegionName =
   | 'Kushtia & Birbhum'
   | 'Santiniketan, Birbhum';
 
+export type ProductVerificationStatus = 'verified' | 'pending_review' | 'demo_only';
+
 export interface ProductVariant {
   id: string;
+  sku?: string;
   label: LocalizedString;
   colorHex?: string;
   inStock: boolean;
+  stockCount?: number;
+  reservedStock?: number;
+  priceBDT?: number;
+  priceMinorUnits?: number;
 }
 
 export interface Product {
   id: number;
+  firestoreId?: string;
   slug: string;
   name: LocalizedString;
   category: Exclude<CraftCategory, 'All'>;
@@ -52,12 +60,13 @@ export interface Product {
   countryOrigin: 'Bangladesh' | 'India (West Bengal)' | 'Shared Bengal Heritage';
   isIndigenousCommunityCraft?: boolean;
   communityName?: LocalizedString;
-  // Market-specific demonstration prices (never invented live exchange rates)
+  // Market-specific prices in integer BDT and minor units (1 BDT = 100 poisha)
   priceBDT: number;
+  priceMinorUnits?: number;
   priceINR: number;
   availableMarkets: MarketCode[];
   artworkIndex: number; // Maps to bespoke SVG heritage plates
-  statusLabel?: LocalizedString; // Maximum 1 subtle unboxed text tag
+  statusLabel?: LocalizedString;
   makingTime: LocalizedString;
   materials: LocalizedString;
   dimensions: string;
@@ -68,6 +77,10 @@ export interface Product {
   variants: ProductVariant[];
   isSeasonalFeatured?: boolean;
   isDemoData: boolean;
+  isPublished?: boolean;
+  verificationStatus?: ProductVerificationStatus;
+  stockCount?: number;
+  reservedStock?: number;
 }
 
 export interface ArtisanProfile {
@@ -84,8 +97,21 @@ export interface ArtisanProfile {
   craftProcess: LocalizedString[];
   collectiveSize?: string;
   yearsOfPractice?: string;
-  verificationStatus: 'Demo Profile — Field Verification Pending';
-  artworkType: 'kantha_loom' | 'jamdani_weave' | 'terracotta_kiln' | 'cane_work' | 'brass_workshop' | 'folk_fan' | 'chakma_backstrap' | 'baul_instrument' | 'santal_mat' | 'baluchari_silk';
+  verificationStatus: 'Demo Profile — Field Verification Pending' | 'Verified Artisan Partner — Field Audited';
+  isVerified?: boolean;
+  isPublished?: boolean;
+  isDemoData?: boolean;
+  artworkType:
+    | 'kantha_loom'
+    | 'jamdani_weave'
+    | 'terracotta_kiln'
+    | 'cane_work'
+    | 'brass_workshop'
+    | 'folk_fan'
+    | 'chakma_backstrap'
+    | 'baul_instrument'
+    | 'santal_mat'
+    | 'baluchari_silk';
 }
 
 export interface StoryArticle {
@@ -117,9 +143,37 @@ export interface CartItem {
   quantity: number;
 }
 
+export type OrderLifecycleStatus =
+  | 'pending_verification'
+  | 'confirmed'
+  | 'packed'
+  | 'shipped'
+  | 'delivered'
+  | 'cancelled';
+
+export type PaymentLifecycleStatus = 'unpaid_cod' | 'collected_cod' | 'refunded';
+
+export type DeliveryZoneCode = 'dhaka_metro' | 'outside_dhaka';
+
+export interface OrderStatusEvent {
+  id: string;
+  orderId: string;
+  customerUid: string;
+  previousStatus: string;
+  newStatus: OrderLifecycleStatus;
+  actorUid: string;
+  actorRole: 'customer' | 'admin' | 'system';
+  note: string;
+  createdAt: string;
+}
+
 export interface OrderRecord {
   orderId: string;
+  orderReference?: string;
+  idempotencyKey?: string;
+  customerUid?: string;
   createdAt: string;
+  updatedAt?: string;
   market: MarketCode;
   currencySymbol: string;
   customerName: string;
@@ -127,19 +181,33 @@ export interface OrderRecord {
   customerPhone: string;
   shippingAddress: string;
   cityOrDistrict: string;
+  thana?: string;
   postalCode: string;
+  deliveryInstructions?: string;
+  deliveryZone?: DeliveryZoneCode;
   deliveryMethodLabel: string;
+  paymentMethod?: 'COD';
   paymentMethodLabel: string;
+  paymentStatus?: PaymentLifecycleStatus;
+  orderStatus?: OrderLifecycleStatus;
   items: {
     productId: number;
+    firestoreProductId?: string;
+    variantId?: string;
+    sku?: string;
     name: string;
     variantLabel: string;
     quantity: number;
     unitPrice: number;
+    unitPriceMinorUnits?: number;
+    lineTotalMinorUnits?: number;
   }[];
   subtotal: number;
   shippingCost: number;
   total: number;
+  subtotalMinorUnits?: number;
+  shippingMinorUnits?: number;
+  totalMinorUnits?: number;
   isDemoOrder: boolean;
 }
 

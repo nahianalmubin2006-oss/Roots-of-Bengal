@@ -1,0 +1,41 @@
+rules_version = '2';
+
+service firebase.storage {
+  match /b/{bucket}/o {
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    // Strict custom claim verification for privileged write access
+    function isAdmin() {
+      return isSignedIn() && request.auth.token.get('admin', false) == true;
+    }
+
+    function isValidImageUpload(maxSizeMb) {
+      return request.resource != null &&
+        request.resource.size < maxSizeMb * 1024 * 1024 &&
+        request.resource.contentType.matches('image/(jpeg|png|webp|avif)');
+    }
+
+    // Publicly readable product & artisan heritage assets, writable only by verified admins
+    match /products/{productId}/{allPaths=**} {
+      allow read: if true;
+      allow write: if isAdmin() && isValidImageUpload(5);
+    }
+
+    match /artisans/{artisanId}/{allPaths=**} {
+      allow read: if true;
+      allow write: if isAdmin() && isValidImageUpload(5);
+    }
+
+    match /stories/{storyId}/{allPaths=**} {
+      allow read: if true;
+      allow write: if isAdmin() && isValidImageUpload(8);
+    }
+
+    // Default deny everything else
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}

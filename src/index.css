@@ -13,12 +13,13 @@
     --page: #d9c9a3;
   }
 
-  html {
+  html, body {
     scroll-behavior: smooth;
     font-family: 'Lora', 'Noto Serif Bengali', Georgia, serif;
     background-color: #efe2c6;
     color: #3b2a1a;
     line-height: 1.55;
+    overflow-x: hidden;
   }
 
   /* Match Screenshot 2: IM Fell English woodblock crafty serif at 400 weight so the natural rough ink edges shine */

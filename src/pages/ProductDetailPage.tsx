@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Heart } from 'lucide-react';
+import { Heart, CheckCircle2, AlertCircle } from 'lucide-react';
 import {
   ArtisanProfile,
   CraftCategory,
@@ -46,13 +46,27 @@ export const ProductDetailPage: React.FC<ProductDetailPageProps> = ({
 
   React.useEffect(() => {
     setActiveThumb(0);
-    setSelectedVariantId(product.variants[0]?.id || 'default');
+    const firstAvailable =
+      product.variants.find((v) => v.inStock && (v.stockCount ?? 1) > 0) || product.variants[0];
+    setSelectedVariantId(firstAvailable?.id || 'default');
     setQuantity(1);
   }, [product.id, product.variants]);
 
+  const selectedVariant =
+    product.variants.find((v) => v.id === selectedVariantId) || product.variants[0];
+  const variantStock =
+    typeof selectedVariant?.stockCount === 'number'
+      ? selectedVariant.stockCount
+      : selectedVariant?.inStock
+      ? 5
+      : 0;
+  const isVariantInStock = Boolean(selectedVariant?.inStock && variantStock > 0);
+  const isVerifiedLive =
+    !product.isDemoData && product.isPublished && product.verificationStatus === 'verified';
+
   const makerProfile = artisans.find((a) => a.id === product.artisanId);
   const isWishlisted = wishlist.includes(product.id);
-  const unitPrice = getUnitPriceForMarket(product, market);
+  const unitPrice = getUnitPriceForMarket(product, market, selectedVariantId);
   const currencySymbol = getCurrencySymbol(market);
   const isAvailableInMarket = product.availableMarkets.includes(market);
 
@@ -64,7 +78,7 @@ export const ProductDetailPage: React.FC<ProductDetailPageProps> = ({
 
   return (
     <div className="max-w-[1200px] mx-auto px-4 sm:px-8 py-8 sm:py-10 space-y-14 pb-28 sm:pb-16">
-      {/* Breadcrumb Navigation (.crumb from Prototype) */}
+      {/* Breadcrumb Navigation */}
       <nav aria-label="Breadcrumb" className="text-xs text-[#3b2a1a]/75">
         <button
           type="button"
@@ -91,7 +105,7 @@ export const ProductDetailPage: React.FC<ProductDetailPageProps> = ({
         </button>
       </nav>
 
-      {/* Main Product Detail Split (.pd from Prototype) */}
+      {/* Main Product Detail Split */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-10 items-start">
         {/* Left: Double-Bordered Main Frame + Thumbnails */}
         <div className="lg:col-span-6 space-y-3">
@@ -147,55 +161,94 @@ export const ProductDetailPage: React.FC<ProductDetailPageProps> = ({
             </div>
           </div>
 
-          <div className="font-tabular text-2xl sm:text-[28px] font-bold text-[#b5502d]">
-            {formatMarketPrice(product.priceBDT, product.priceINR, market)}
+          {/* Price & Live Verification Status */}
+          <div className="flex flex-wrap items-baseline justify-between gap-3 pt-1">
+            <div className="font-tabular text-2xl sm:text-[28px] font-bold text-[#b5502d]">
+              {formatMarketPrice(unitPrice, product.priceINR, market)}
+            </div>
+
+            <div className="text-xs">
+              {isVerifiedLive ? (
+                <span className="inline-flex items-center gap-1 font-bold text-[#5d7a4a]">
+                  <CheckCircle2 className="w-3.5 h-3.5" />
+                  <span>Verified Live Inventory · Ready for Bangladesh COD</span>
+                </span>
+              ) : (
+                <span className="inline-flex items-center gap-1 text-[#8a4b2a]">
+                  <AlertCircle className="w-3.5 h-3.5" />
+                  <span>Demonstration Record · Awaiting Admin Verification for Live COD</span>
+                </span>
+              )}
+            </div>
           </div>
 
           <p className="text-[15px] text-[#3b2a1a]/85 leading-relaxed">
             {tText(product.shortDescription, language)}
           </p>
 
-          {/* Variant Selector (.opt & .chip from Prototype) */}
+          {/* Variant Selector with Stock & SKU Info */}
           <div className="space-y-2 pt-1">
-            <b className="block text-xs tracking-wider uppercase text-[#3b2a1a]">
-              Colourway / Option
-            </b>
+            <div className="flex items-center justify-between text-xs">
+              <b className="tracking-wider uppercase text-[#3b2a1a]">
+                Colourway / Option
+              </b>
+              <span className="font-tabular text-[#8a4b2a]">
+                {selectedVariant?.sku ? `SKU: ${selectedVariant.sku} · ` : ''}
+                {isVariantInStock ? (
+                  <strong className="text-[#5d7a4a]">{variantStock} available in batch</strong>
+                ) : (
+                  <strong className="text-[#b5502d]">Out of Stock</strong>
+                )}
+              </span>
+            </div>
+
             <div className="flex flex-wrap gap-2">
-              {product.variants.map((v) => (
-                <button
-                  key={v.id}
-                  type="button"
-                  onClick={() => setSelectedVariantId(v.id)}
-                  className={`px-3.5 py-1.5 text-[13px] border border-[#8a4b2a] transition-colors cursor-pointer ${
-                    selectedVariantId === v.id
-                      ? 'bg-[#8a4b2a] text-[#fff3dc]'
-                      : 'bg-[#f6ecd4] text-[#3b2a1a] hover:bg-[#e4d3ad]'
-                  }`}
-                >
-                  {tText(v.label, language)}
-                </button>
-              ))}
+              {product.variants.map((v) => {
+                const vStock = typeof v.stockCount === 'number' ? v.stockCount : v.inStock ? 5 : 0;
+                const vAvailable = v.inStock && vStock > 0;
+                return (
+                  <button
+                    key={v.id}
+                    type="button"
+                    onClick={() => {
+                      setSelectedVariantId(v.id);
+                      setQuantity(1);
+                    }}
+                    className={`px-3.5 py-1.5 text-[13px] border transition-colors cursor-pointer ${
+                      selectedVariantId === v.id
+                        ? 'border-[#8a4b2a] bg-[#8a4b2a] text-[#fff3dc]'
+                        : vAvailable
+                        ? 'border-[#8a4b2a] bg-[#f6ecd4] text-[#3b2a1a] hover:bg-[#e4d3ad]'
+                        : 'border-[#8a4b2a]/40 bg-[#e4d3ad]/50 text-[#3b2a1a]/50 line-through'
+                    }`}
+                  >
+                    {tText(v.label, language)} ({vStock})
+                  </button>
+                );
+              })}
             </div>
           </div>
 
-          {/* Quantity Stepper (.qty) & Stamp-Shadow Add to Bag Button (.btn) */}
+          {/* Quantity Stepper & Stamp-Shadow Add to Bag Button */}
           <div className="pt-2 flex flex-wrap items-center gap-3">
             <div className="inline-flex border-2 border-[#8a4b2a] bg-[#f6ecd4]">
               <button
                 type="button"
+                disabled={!isVariantInStock || quantity <= 1}
                 onClick={() => setQuantity((q) => Math.max(1, q - 1))}
-                className="px-3.5 py-2 font-bold text-[#3b2a1a] hover:bg-[#e4d3ad] cursor-pointer"
+                className="px-3.5 py-2 font-bold text-[#3b2a1a] hover:bg-[#e4d3ad] disabled:opacity-40 cursor-pointer"
                 aria-label="Decrease quantity"
               >
                 −
               </button>
               <i className="px-3.5 py-2 not-italic font-tabular min-w-[44px] text-center text-[#3b2a1a]">
-                {quantity}
+                {isVariantInStock ? quantity : 0}
               </i>
               <button
                 type="button"
-                onClick={() => setQuantity((q) => q + 1)}
-                className="px-3.5 py-2 font-bold text-[#3b2a1a] hover:bg-[#e4d3ad] cursor-pointer"
+                disabled={!isVariantInStock || quantity >= variantStock}
+                onClick={() => setQuantity((q) => Math.min(variantStock, q + 1))}
+                className="px-3.5 py-2 font-bold text-[#3b2a1a] hover:bg-[#e4d3ad] disabled:opacity-40 cursor-pointer"
                 aria-label="Increase quantity"
               >
                 +
@@ -204,11 +257,22 @@ export const ProductDetailPage: React.FC<ProductDetailPageProps> = ({
 
             <button
               type="button"
+              disabled={!isVariantInStock}
               onClick={(e) => onAddToCart(product.id, selectedVariantId, quantity, e)}
-              className="craft-btn px-6 py-2.5 text-sm rounded-[3px] cursor-pointer"
+              className={`px-6 py-2.5 text-sm rounded-[3px] ${
+                isVariantInStock
+                  ? 'craft-btn cursor-pointer'
+                  : 'bg-[#e4d3ad] border-2 border-[#8a4b2a]/40 text-[#3b2a1a]/50 cursor-not-allowed'
+              }`}
             >
-              Add to Bag · {currencySymbol}
-              {(unitPrice * quantity).toLocaleString()}
+              {isVariantInStock ? (
+                <>
+                  Add to Bag · {currencySymbol}
+                  {(unitPrice * quantity).toLocaleString()}
+                </>
+              ) : (
+                'Variant Out of Stock'
+              )}
             </button>
 
             <button
@@ -229,7 +293,7 @@ export const ProductDetailPage: React.FC<ProductDetailPageProps> = ({
             </div>
           )}
 
-          {/* Dashed Heritage Details List (.det from Prototype) */}
+          {/* Dashed Heritage Details List */}
           <div className="mt-5 border-t border-dashed border-[#8a4b2a] divide-y divide-dashed divide-[#8a4b2a] text-sm">
             <div className="py-3">
               <b className="block text-[#3b2a1a]">Time to make & Materials</b>
@@ -246,13 +310,17 @@ export const ProductDetailPage: React.FC<ProductDetailPageProps> = ({
             <div className="py-3">
               <b className="block text-[#3b2a1a]">Signed by the maker</b>
               <span className="text-[#3b2a1a]/85">
-                Includes an origin card with {tText(product.artisanName, language)}’s regional story ({makerProfile?.verificationStatus || 'Demo Record'})
+                Includes an origin card with {tText(product.artisanName, language)}’s regional story (
+                {isVerifiedLive
+                  ? 'Verified Artisan Partner — Field Audited'
+                  : makerProfile?.verificationStatus || 'Demo Record'}
+                )
               </span>
             </div>
             <div className="py-3">
-              <b className="block text-[#3b2a1a]">Delivery & Care</b>
+              <b className="block text-[#3b2a1a]">Bangladesh Delivery & Care</b>
               <span className="text-[#3b2a1a]/85">
-                {tText(product.careInstructions, language)}
+                Inside Dhaka Metro: ৳80 (2–3 days) · Outside Dhaka Nationwide: ৳150 (4–6 days) · Cash on Delivery (COD). Care: {tText(product.careInstructions, language)}
               </span>
             </div>
           </div>
