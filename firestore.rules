@@ -26,16 +26,17 @@ service cloud.firestore {
       return isSignedIn() && request.auth.uid == userId;
     }
 
-    // Server-verified admin: strictly checks custom claims or trusted /adminUsers/{uid} document
-    // Never assumes admin rights based purely on an email address string or client-supplied role
+    // Zero-Trust Admin Verification:
+    // 1. Must be signed in
+    // 2. Token custom claim 'admin' must NOT be explicitly false (prevents revoked token bypass)
+    // 3. Authoritative /adminUsers/{uid} document MUST exist with role in ['admin', 'super_admin'] and revoked != true
+    // Never grants access based on email string alone or when either source denies the user.
     function isAdmin() {
-      return isSignedIn() && (
-        request.auth.token.get('admin', false) == true ||
-        (
-          exists(/databases/$(database)/documents/adminUsers/$(request.auth.uid)) &&
-          get(/databases/$(database)/documents/adminUsers/$(request.auth.uid)).data.role in ['admin', 'super_admin']
-        )
-      );
+      return isSignedIn() &&
+        request.auth.token.get('admin', true) != false &&
+        exists(/databases/$(database)/documents/adminUsers/$(request.auth.uid)) &&
+        get(/databases/$(database)/documents/adminUsers/$(request.auth.uid)).data.role in ['admin', 'super_admin'] &&
+        get(/databases/$(database)/documents/adminUsers/$(request.auth.uid)).data.get('revoked', false) == false;
     }
 
     function hasRequiredFields(fields) {
@@ -68,7 +69,8 @@ service cloud.firestore {
         data.uid == uid &&
         isNonEmptyString(data.displayName, 1, 100) &&
         (!('email' in data) || data.email == '' || isValidEmail(data.email)) &&
-        (!('preferredLanguage' in data) || data.preferredLanguage in ['en', 'bn']) &&
+        (!('preferredLanguage' in data) || data.preferredLanguage in ['en', 'bn', 'as']) &&
+        data.role in ['customer', 'admin', 'super_admin'] &&
         data.createdAt is timestamp &&
         data.updatedAt is timestamp;
     }
@@ -97,7 +99,7 @@ service cloud.firestore {
           'isPublished', 'isDemoData', 'verificationStatus', 'createdAt', 'updatedAt',
           'taglineEn', 'taglineBn', 'descriptionEn', 'descriptionBn', 'craftStoryEn', 'craftStoryBn',
           'materialsEn', 'materialsBn', 'careEn', 'careBn', 'originEn', 'originBn',
-          'deliveryBdt', 'deliveryEstimateEn', 'deliveryEstimateBn', 'artworkType'
+          'deliveryBdt', 'deliveryEstimateEn', 'deliveryEstimateBn', 'artworkType', 'lastOrderId'
         ]) &&
         data.id == productId &&
         isNonEmptyString(data.slug, 1, 120) &&
@@ -114,20 +116,50 @@ service cloud.firestore {
         data.isPublished is bool &&
         data.isDemoData is bool &&
         data.verificationStatus in ['verified', 'pending_review', 'demo_only'] &&
+        (!('lastOrderId' in data) || isValidId(data.lastOrderId)) &&
         data.createdAt is timestamp &&
         data.updatedAt is timestamp;
     }
 
+    // Atomic relational verification for customer order stock adjustments:
+    // Blocks direct client stock tampering by requiring an atomic order create or cancel in the same transaction.
+    function isAtomicCustomerOrderTransition(orderId, isDecrement) {
+      return isValidId(orderId) &&
+        existsAfter(/databases/$(database)/documents/orders/$(orderId)) &&
+        getAfter(/databases/$(database)/documents/orders/$(orderId)).data.customerUid == request.auth.uid &&
+        getAfter(/databases/$(database)/documents/orders/$(orderId)).data.updatedAt == request.time &&
+        (
+          (
+            isDecrement &&
+            !exists(/databases/$(database)/documents/orders/$(orderId)) &&
+            getAfter(/databases/$(database)/documents/orders/$(orderId)).data.orderStatus == 'pending_verification'
+          ) ||
+          (
+            !isDecrement &&
+            exists(/databases/$(database)/documents/orders/$(orderId)) &&
+            get(/databases/$(database)/documents/orders/$(orderId)).data.customerUid == request.auth.uid &&
+            get(/databases/$(database)/documents/orders/$(orderId)).data.orderStatus == 'pending_verification' &&
+            getAfter(/databases/$(database)/documents/orders/$(orderId)).data.orderStatus == 'cancelled'
+          )
+        );
+    }
+
     function isValidProductStockAdjustment() {
-      return request.resource.data.diff(resource.data).affectedKeys().hasOnly(['stockCount', 'reservedStock', 'updatedAt']) &&
+      return request.resource.data.diff(resource.data).affectedKeys().hasOnly(['stockCount', 'reservedStock', 'lastOrderId', 'updatedAt']) &&
         resource.data.isPublished == true &&
         resource.data.isDemoData == false &&
         resource.data.verificationStatus == 'verified' &&
         request.resource.data.stockCount is int &&
         request.resource.data.stockCount >= 0 &&
-        request.resource.data.reservedStock is int &&
-        request.resource.data.reservedStock >= 0 &&
-        request.resource.data.updatedAt == request.time;
+        request.resource.data.stockCount != resource.data.stockCount &&
+        math.abs(request.resource.data.stockCount - resource.data.stockCount) <= 50 &&
+        request.resource.data.reservedStock == resource.data.reservedStock &&
+        'lastOrderId' in request.resource.data &&
+        request.resource.data.updatedAt == request.time &&
+        isAtomicCustomerOrderTransition(
+          request.resource.data.lastOrderId,
+          request.resource.data.stockCount < resource.data.stockCount
+        );
     }
 
     function isValidVariant(data, productId, variantId) {
@@ -137,7 +169,7 @@ service cloud.firestore {
         ]) &&
         hasOnlyAllowedFields([
           'id', 'productId', 'sku', 'labelEn', 'labelBn',
-          'priceBdt', 'priceMinorUnits', 'stockCount', 'reservedStock', 'isAvailable', 'updatedAt'
+          'priceBdt', 'priceMinorUnits', 'stockCount', 'reservedStock', 'isAvailable', 'updatedAt', 'lastOrderId'
         ]) &&
         data.id == variantId &&
         data.productId == productId &&
@@ -149,17 +181,24 @@ service cloud.firestore {
         data.stockCount is int && data.stockCount >= 0 && data.stockCount <= 100000 &&
         data.reservedStock is int && data.reservedStock >= 0 &&
         data.isAvailable is bool &&
+        (!('lastOrderId' in data) || isValidId(data.lastOrderId)) &&
         data.updatedAt is timestamp;
     }
 
     function isValidVariantStockAdjustment() {
-      return request.resource.data.diff(resource.data).affectedKeys().hasOnly(['stockCount', 'reservedStock', 'isAvailable', 'updatedAt']) &&
+      return request.resource.data.diff(resource.data).affectedKeys().hasOnly(['stockCount', 'reservedStock', 'isAvailable', 'lastOrderId', 'updatedAt']) &&
         request.resource.data.stockCount is int &&
         request.resource.data.stockCount >= 0 &&
-        request.resource.data.reservedStock is int &&
-        request.resource.data.reservedStock >= 0 &&
+        request.resource.data.stockCount != resource.data.stockCount &&
+        math.abs(request.resource.data.stockCount - resource.data.stockCount) <= 20 &&
+        request.resource.data.reservedStock == resource.data.reservedStock &&
         request.resource.data.isAvailable == (request.resource.data.stockCount > 0) &&
-        request.resource.data.updatedAt == request.time;
+        'lastOrderId' in request.resource.data &&
+        request.resource.data.updatedAt == request.time &&
+        isAtomicCustomerOrderTransition(
+          request.resource.data.lastOrderId,
+          request.resource.data.stockCount < resource.data.stockCount
+        );
     }
 
     function isValidArtisan(data, artisanId) {
@@ -288,6 +327,16 @@ service cloud.firestore {
         );
     }
 
+    function isValidInitialOwnerBootstrap(data, uid) {
+      return hasRequiredFields(['uid', 'email', 'role', 'revoked', 'grantedAt']) &&
+        hasOnlyAllowedFields(['uid', 'email', 'role', 'revoked', 'grantedAt']) &&
+        data.uid == uid &&
+        data.email == "nahianalmubin2006@gmail.com" &&
+        data.role == 'super_admin' &&
+        data.revoked == false &&
+        data.grantedAt == request.time;
+    }
+
     // ===============================================================
     // Collection Match Rules
     // ===============================================================
@@ -302,26 +351,30 @@ service cloud.firestore {
     match /users/{uid} {
       allow get: if isValidId(uid) && (isOwner(uid) || isAdmin());
       allow list: if isAdmin();
-      allow create: if isOwner(uid) &&
+      allow create: if isValidId(uid) &&
+        isOwner(uid) &&
         isValidUserProfile(request.resource.data, uid) &&
         request.resource.data.role == 'customer' &&
         request.resource.data.createdAt == request.time &&
         request.resource.data.updatedAt == request.time;
-      allow update: if (isOwner(uid) || isAdmin()) &&
+      allow update: if isValidId(uid) &&
+        (isOwner(uid) || isAdmin()) &&
         isValidUserProfile(request.resource.data, uid) &&
-        request.resource.data.uid == resource.data.uid &&
-        request.resource.data.createdAt == resource.data.createdAt &&
-        (request.resource.data.role == resource.data.role || isAdmin()) &&
+        (!('uid' in resource.data) || request.resource.data.uid == resource.data.uid) &&
+        (!('createdAt' in resource.data) || !(resource.data.createdAt is timestamp) || request.resource.data.createdAt == resource.data.createdAt) &&
+        (request.resource.data.role == 'customer' || ('role' in resource.data && request.resource.data.role == resource.data.role) || isAdmin()) &&
         request.resource.data.updatedAt == request.time;
-      allow delete: if isAdmin();
+      allow delete: if isValidId(uid) && isAdmin();
 
       // Private PII subcollection (strictly owner or verified admin)
       match /private/{docId} {
-        allow get, list: if isOwner(uid) || isAdmin();
-        allow create, update: if isOwner(uid) &&
+        allow get: if isValidId(docId) && (isOwner(uid) || isAdmin());
+        allow list: if isOwner(uid) || isAdmin();
+        allow create, update: if isValidId(docId) &&
+          isOwner(uid) &&
           isValidUserPrivate(request.resource.data, uid) &&
           request.resource.data.updatedAt == request.time;
-        allow delete: if isOwner(uid) || isAdmin();
+        allow delete: if isValidId(docId) && (isOwner(uid) || isAdmin());
       }
     }
 
@@ -338,26 +391,24 @@ service cloud.firestore {
         resource.data.verificationStatus == 'verified'
       ) || isAdmin();
       allow create: if isAdmin() && isValidId(productId) && isValidProduct(request.resource.data, productId);
-      allow update: if (isAdmin() && isValidId(productId) && isValidProduct(request.resource.data, productId) && request.resource.data.createdAt == resource.data.createdAt) ||
-        (isSignedIn() && isValidProductStockAdjustment());
-      allow delete: if isAdmin();
+      allow update: if isValidId(productId) && (
+        (isAdmin() && isValidProduct(request.resource.data, productId)) ||
+        (isSignedIn() && isValidProductStockAdjustment())
+      );
+      allow delete: if isValidId(productId) && isAdmin();
 
       // Product variants
       match /variants/{variantId} {
-        allow get: if isValidId(variantId) && ((
-          get(/databases/$(database)/documents/products/$(productId)).data.isPublished == true &&
-          get(/databases/$(database)/documents/products/$(productId)).data.isDemoData == false &&
-          get(/databases/$(database)/documents/products/$(productId)).data.verificationStatus == 'verified'
-        ) || isAdmin());
-        allow list: if (
-          get(/databases/$(database)/documents/products/$(productId)).data.isPublished == true &&
-          get(/databases/$(database)/documents/products/$(productId)).data.isDemoData == false &&
-          get(/databases/$(database)/documents/products/$(productId)).data.verificationStatus == 'verified'
-        ) || isAdmin();
+        allow get: if isValidId(variantId) && (
+          resource.data.get('productId', productId) == productId || isAdmin()
+        );
+        allow list: if resource.data.get('productId', productId) == productId || isAdmin();
         allow create: if isAdmin() && isValidId(variantId) && isValidVariant(request.resource.data, productId, variantId);
-        allow update: if (isAdmin() && isValidId(variantId) && isValidVariant(request.resource.data, productId, variantId)) ||
-          (isSignedIn() && isValidVariantStockAdjustment());
-        allow delete: if isAdmin();
+        allow update: if isValidId(variantId) && (
+          (isAdmin() && isValidVariant(request.resource.data, productId, variantId)) ||
+          (isSignedIn() && isValidVariantStockAdjustment())
+        );
+        allow delete: if isValidId(variantId) && isAdmin();
       }
     }
 
@@ -374,7 +425,7 @@ service cloud.firestore {
         resource.data.isVerified == true
       ) || isAdmin();
       allow create, update: if isAdmin() && isValidId(artisanId) && isValidArtisan(request.resource.data, artisanId);
-      allow delete: if isAdmin();
+      allow delete: if isValidId(artisanId) && isAdmin();
     }
 
     // Orders (strictly accessible only to the customer owner or verified admin)
@@ -382,24 +433,34 @@ service cloud.firestore {
       allow get: if isValidId(orderId) && isSignedIn() && (resource.data.customerUid == request.auth.uid || isAdmin());
       allow list: if isSignedIn() && (resource.data.customerUid == request.auth.uid || isAdmin());
       allow create: if isSignedIn() && isValidId(orderId) && isValidOrderCreate(request.resource.data, orderId);
-      allow update: if isValidCustomerOrderCancel() || (
-        isAdmin() &&
-        request.resource.data.id == resource.data.id &&
-        request.resource.data.orderReference == resource.data.orderReference &&
-        request.resource.data.idempotencyKey == resource.data.idempotencyKey &&
-        request.resource.data.customerUid == resource.data.customerUid &&
-        request.resource.data.createdAt == resource.data.createdAt &&
-        request.resource.data.paymentMethod == 'COD' &&
-        request.resource.data.paymentStatus in ['unpaid_cod', 'collected_cod', 'refunded'] &&
-        request.resource.data.orderStatus in ['pending_verification', 'confirmed', 'packed', 'shipped', 'delivered', 'cancelled'] &&
-        request.resource.data.updatedAt == request.time
+      allow update: if isValidId(orderId) && (
+        isValidCustomerOrderCancel() || (
+          isAdmin() &&
+          request.resource.data.id == resource.data.id &&
+          request.resource.data.orderReference == resource.data.orderReference &&
+          request.resource.data.idempotencyKey == resource.data.idempotencyKey &&
+          request.resource.data.customerUid == resource.data.customerUid &&
+          request.resource.data.createdAt == resource.data.createdAt &&
+          request.resource.data.paymentMethod == 'COD' &&
+          request.resource.data.paymentStatus in ['unpaid_cod', 'collected_cod', 'refunded'] &&
+          request.resource.data.orderStatus in ['pending_verification', 'confirmed', 'packed', 'shipped', 'delivered', 'cancelled'] &&
+          request.resource.data.updatedAt == request.time
+        )
       );
       allow delete: if false;
 
-      // Order line items (immutable)
+      // Order line items (immutable; accessible to the order's customer owner or verified admin)
       match /items/{itemId} {
-        allow get: if isValidId(itemId) && isSignedIn() && (resource.data.customerUid == request.auth.uid || isAdmin());
-        allow list: if isSignedIn() && (resource.data.customerUid == request.auth.uid || isAdmin());
+        allow get: if isValidId(itemId) && isSignedIn() && (
+          resource.data.get('customerUid', '') == request.auth.uid ||
+          get(/databases/$(database)/documents/orders/$(orderId)).data.customerUid == request.auth.uid ||
+          isAdmin()
+        );
+        allow list: if isSignedIn() && (
+          resource.data.get('customerUid', '') == request.auth.uid ||
+          get(/databases/$(database)/documents/orders/$(orderId)).data.customerUid == request.auth.uid ||
+          isAdmin()
+        );
         allow create: if isSignedIn() && isValidId(itemId) && isValidOrderItemCreate(request.resource.data, orderId, itemId);
         allow update, delete: if false;
       }
@@ -413,11 +474,20 @@ service cloud.firestore {
       allow update, delete: if false;
     }
 
-    // Admin role registry (Clients can NEVER modify admin roles directly)
+    // Admin role registry:
+    // - Regular clients can NEVER self-assign, update, or delete admin roles.
+    // - Permits strictly a one-time initial bootstrap create for the verified project owner if and only if the document does not yet exist.
+    // - All subsequent role grants and revocations must execute through Firebase Admin SDK / Cloud Functions.
     match /adminUsers/{uid} {
       allow get: if isValidId(uid) && isSignedIn() && (request.auth.uid == uid || isAdmin());
       allow list: if isAdmin();
-      allow create, update, delete: if false; // Must be modified solely through trusted Cloud Functions / Admin SDK
+      allow create: if isValidId(uid) &&
+        isOwner(uid) &&
+        request.auth.token.email == "nahianalmubin2006@gmail.com" &&
+        request.auth.token.email_verified == true &&
+        !exists(/databases/$(database)/documents/adminUsers/$(uid)) &&
+        isValidInitialOwnerBootstrap(request.resource.data, uid);
+      allow update, delete: if false;
     }
   }
 }

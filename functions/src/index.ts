@@ -1,8 +1,13 @@
 import { onCall, HttpsError } from 'firebase-functions/v2/https';
 import * as admin from 'firebase-admin';
+import { getFirestore, FieldValue } from 'firebase-admin/firestore';
 
-admin.initializeApp();
-const db = admin.firestore();
+const app = admin.initializeApp();
+const FIRESTORE_DATABASE_ID =
+  process.env.FIRESTORE_DATABASE_ID ||
+  'ai-studio-rootsofbengal-22074646-460f-4ebc-ac7e-7dab24b1ac5e';
+
+const db = getFirestore(app, FIRESTORE_DATABASE_ID);
 
 export interface OrderItemInput {
   productId: string;
@@ -39,38 +44,50 @@ function generateOrderReference(): string {
   return `ROB-${datePart}-${randomPart}`;
 }
 
-async function verifyCallerIsAdmin(auth: any): Promise<{ uid: string; role: string }> {
-  if (!auth) {
+/**
+ * Zero-Trust Server-Side Admin Verification:
+ * 1. Requires valid Firebase Authentication context.
+ * 2. Denies immediately if custom claim explicitly revokes access (`token.admin === false`).
+ * 3. Always checks the live `/adminUsers/{uid}` Firestore document to guarantee
+ *    instant revocation even before a 60-minute JWT expires.
+ */
+async function verifyCallerIsAdmin(auth: any): Promise<{ uid: string; role: 'admin' | 'super_admin' }> {
+  if (!auth || !auth.uid) {
     throw new HttpsError('unauthenticated', 'Authentication required.');
   }
-  // 1. Check custom claim first
-  if (auth.token?.admin === true && typeof auth.token?.role === 'string') {
-    return { uid: auth.uid, role: auth.token.role };
+
+  // If custom claim is explicitly set to false, deny immediately
+  if (auth.token?.admin === false || auth.token?.role === 'none') {
+    throw new HttpsError('permission-denied', 'Administrative privileges have been revoked.');
   }
-  // 2. Check verified database record in adminUsers
+
+  // Always verify authoritative database record in /adminUsers/{uid}
   const adminDoc = await db.collection('adminUsers').doc(auth.uid).get();
-  if (adminDoc.exists) {
-    const data = adminDoc.data();
-    if (data?.role === 'admin' || data?.role === 'super_admin') {
-      return { uid: auth.uid, role: data.role };
-    }
+  if (!adminDoc.exists) {
+    throw new HttpsError('permission-denied', 'Unauthorized. Administrative credentials required.');
   }
-  throw new HttpsError('permission-denied', 'Unauthorized. Administrative credentials required.');
+
+  const data = adminDoc.data();
+  if (data?.revoked === true || (data?.role !== 'admin' && data?.role !== 'super_admin')) {
+    throw new HttpsError('permission-denied', 'Unauthorized. Administrative role is inactive or invalid.');
+  }
+
+  return { uid: auth.uid, role: data.role };
 }
 
 /**
  * Privileged Cloud Function: adminBootstrapInitialAdmin
- * Allows the designated repository/project owner to claim the initial super_admin role once.
- * Sets Firebase Auth custom user claims and records the /adminUsers document.
+ * Allows the designated repository/project owner to claim the initial super_admin role ONCE.
+ * Enforces server-side identity verification and a strict one-time transactional lock.
  */
 export const adminBootstrapInitialAdmin = onCall({ region: 'asia-south1' }, async (request) => {
-  if (!request.auth) {
+  if (!request.auth || !request.auth.uid) {
     throw new HttpsError('unauthenticated', 'Authentication required.');
   }
 
   const callerUid = request.auth.uid;
   const callerEmail = request.auth.token.email || '';
-  const emailVerified = Boolean(request.auth.token.email_verified);
+  const emailVerified = request.auth.token.email_verified === true;
 
   if (callerEmail !== INITIAL_BOOTSTRAP_OWNER_EMAIL || !emailVerified) {
     throw new HttpsError(
@@ -80,23 +97,38 @@ export const adminBootstrapInitialAdmin = onCall({ region: 'asia-south1' }, asyn
   }
 
   const adminRef = db.collection('adminUsers').doc(callerUid);
-  const now = admin.firestore.FieldValue.serverTimestamp();
+  const existingSuperAdminsQuery = db
+    .collection('adminUsers')
+    .where('role', '==', 'super_admin')
+    .limit(1);
 
-  // Set custom user claims via Admin SDK
+  await db.runTransaction(async (tx) => {
+    const [callerSnap, existingSupersSnap] = await Promise.all([
+      tx.get(adminRef),
+      tx.get(existingSuperAdminsQuery),
+    ]);
+
+    if (callerSnap.exists || !existingSupersSnap.empty) {
+      throw new HttpsError(
+        'already-exists',
+        'Initial super_admin bootstrap has already been completed and cannot be executed repeatedly.'
+      );
+    }
+
+    tx.set(adminRef, {
+      uid: callerUid,
+      email: callerEmail,
+      role: 'super_admin',
+      revoked: false,
+      grantedAt: FieldValue.serverTimestamp(),
+    });
+  });
+
+  // Set custom user claims via Admin SDK after transaction succeeds
   await admin.auth().setCustomUserClaims(callerUid, {
     admin: true,
     role: 'super_admin',
   });
-
-  await adminRef.set(
-    {
-      uid: callerUid,
-      email: callerEmail,
-      role: 'super_admin',
-      grantedAt: now,
-    },
-    { merge: true }
-  );
 
   return {
     success: true,
@@ -117,8 +149,12 @@ export const adminSetRole = onCall({ region: 'asia-south1' }, async (request) =>
   }
 
   const { targetUid, role } = request.data || {};
-  if (!targetUid || typeof targetUid !== 'string' || targetUid.length < 5) {
+  if (!targetUid || typeof targetUid !== 'string' || targetUid.length < 5 || targetUid.length > 128) {
     throw new HttpsError('invalid-argument', 'Valid targetUid is required.');
+  }
+
+  if (targetUid === caller.uid) {
+    throw new HttpsError('failed-precondition', 'Super Admins cannot modify or revoke their own role.');
   }
 
   if (role === 'admin' || role === 'super_admin') {
@@ -131,13 +167,14 @@ export const adminSetRole = onCall({ region: 'asia-south1' }, async (request) =>
       uid: targetUid,
       email: userRecord.email || '',
       role,
-      grantedAt: admin.firestore.FieldValue.serverTimestamp(),
+      revoked: false,
+      grantedAt: FieldValue.serverTimestamp(),
     });
     return { success: true, targetUid, role };
   } else if (role === 'none') {
     await admin.auth().setCustomUserClaims(targetUid, {
       admin: false,
-      role: null,
+      role: 'none',
     });
     await db.collection('adminUsers').doc(targetUid).delete();
     return { success: true, targetUid, role: 'revoked' };
@@ -301,18 +338,20 @@ export const createOrder = onCall({ region: 'asia-south1' }, async (request) => 
     const shippingMinorUnits = shippingBdt * 100;
     const totalBdt = subtotalBdt + shippingBdt;
     const totalMinorUnits = subtotalMinorUnits + shippingMinorUnits;
-    const now = admin.firestore.FieldValue.serverTimestamp();
+    const now = FieldValue.serverTimestamp();
     const orderReference = generateOrderReference();
 
     // Decrement product and variant stock transactionally
     for (const line of validatedLineItems) {
       tx.update(line.productRef, {
         stockCount: line.nextProductStock,
+        lastOrderId: orderId,
         updatedAt: now,
       });
       tx.update(line.variantRef, {
         stockCount: line.nextVariantStock,
         isAvailable: line.nextVariantStock > 0,
+        lastOrderId: orderId,
         updatedAt: now,
       });
     }
@@ -420,7 +459,7 @@ export const cancelOrder = onCall({ region: 'asia-south1' }, async (request) => 
       throw new HttpsError('failed-precondition', 'Only orders in pending_verification state can be cancelled by the customer.');
     }
 
-    const now = admin.firestore.FieldValue.serverTimestamp();
+    const now = FieldValue.serverTimestamp();
 
     // Restore stock for each line item
     for (const itemDoc of itemsSnap.docs) {
@@ -431,11 +470,11 @@ export const cancelOrder = onCall({ region: 'asia-south1' }, async (request) => 
 
       if (prodSnap.exists) {
         const nextProdStock = Number(prodSnap.data()!.stockCount ?? 0) + Number(item.quantity);
-        tx.update(productRef, { stockCount: nextProdStock, updatedAt: now });
+        tx.update(productRef, { stockCount: nextProdStock, lastOrderId: orderId, updatedAt: now });
       }
       if (varSnap.exists) {
         const nextVarStock = Number(varSnap.data()!.stockCount ?? 0) + Number(item.quantity);
-        tx.update(variantRef, { stockCount: nextVarStock, isAvailable: nextVarStock > 0, updatedAt: now });
+        tx.update(variantRef, { stockCount: nextVarStock, isAvailable: nextVarStock > 0, lastOrderId: orderId, updatedAt: now });
       }
     }
 
@@ -488,7 +527,7 @@ export const adminUpdateOrderStatus = onCall({ region: 'asia-south1' }, async (r
     }
     const data = snap.data()!;
     const prevStatus = data.orderStatus || 'pending_verification';
-    const now = admin.firestore.FieldValue.serverTimestamp();
+    const now = FieldValue.serverTimestamp();
 
     tx.update(orderRef, {
       orderStatus,

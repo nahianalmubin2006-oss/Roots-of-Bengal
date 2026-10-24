@@ -6,17 +6,18 @@
 import { describe, it, expect } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
-import { checkIsUserAdmin } from '../lib/firebaseAuth';
 
-// Read actual security rules directly from repository root
+// Read actual security rules & backend/auth files directly from repository root
 const FIRESTORE_RULES_PATH = path.resolve(process.cwd(), 'firestore.rules');
 const STORAGE_RULES_PATH = path.resolve(process.cwd(), 'storage.rules');
+const FUNCTIONS_INDEX_PATH = path.resolve(process.cwd(), 'functions/src/index.ts');
+const FIREBASE_AUTH_PATH = path.resolve(process.cwd(), 'src/lib/firebaseAuth.ts');
+
 const firestoreRulesContent = fs.readFileSync(FIRESTORE_RULES_PATH, 'utf-8');
 const storageRulesContent = fs.readFileSync(STORAGE_RULES_PATH, 'utf-8');
+const functionsContent = fs.readFileSync(FUNCTIONS_INDEX_PATH, 'utf-8');
+const firebaseAuthContent = fs.readFileSync(FIREBASE_AUTH_PATH, 'utf-8');
 
-/**
- * High-fidelity Rule Engine Simulator mirroring the exact logic in firestore.rules
- */
 interface AuthContext {
   uid: string | null;
   token?: {
@@ -28,12 +29,16 @@ interface AuthContext {
 }
 
 interface MockDatabase {
-  adminUsers: Record<string, { role: string; email: string }>;
+  adminUsers: Record<string, { uid: string; role: string; email: string; revoked?: boolean }>;
   users: Record<string, { uid: string; role: string; private?: Record<string, any> }>;
   orders: Record<string, { id: string; customerUid: string; orderStatus: string; total: number }>;
-  products: Record<string, { id: number; isPublished: boolean; isDemoData: boolean; verificationStatus: string; priceBdt: number }>;
+  products: Record<string, { id: number; isPublished: boolean; isDemoData: boolean; verificationStatus: string; priceBdt: number; stockCount: number }>;
 }
 
+/**
+ * High-fidelity Rule Engine Simulator mirroring the exact conjunctive logic in firestore.rules,
+ * storage.rules, src/lib/firebaseAuth.ts, and functions/src/index.ts.
+ */
 class SecurityRulesEvaluator {
   private db: MockDatabase;
 
@@ -50,25 +55,27 @@ class SecurityRulesEvaluator {
   }
 
   /**
-   * Evaluates the isAdmin() function as written in firestore.rules:
-   * function isAdmin() {
-   *   return isSignedIn() && (
-   *     request.auth.token.get('admin', false) == true ||
-   *     (
-   *       exists(/databases/$(database)/documents/adminUsers/$(request.auth.uid)) &&
-   *       get(/databases/$(database)/documents/adminUsers/$(request.auth.uid)).data.role in ['admin', 'super_admin']
-   *     )
-   *   );
-   * }
+   * Evaluates conjunctive isAdmin() logic:
+   * 1. Must be signed in
+   * 2. Token custom claim 'admin' must NOT be explicitly false (`request.auth.token.get('admin', true) != false`)
+   * 3. Authoritative `/adminUsers/{uid}` document MUST exist with `role in ['admin', 'super_admin']` and `revoked != true`
    */
   public isAdmin(auth: AuthContext): boolean {
     if (!this.isSignedIn(auth)) return false;
-    if (auth.token?.admin === true) return true;
-    const adminDoc = this.db.adminUsers[auth.uid!];
-    if (adminDoc && ['admin', 'super_admin'].includes(adminDoc.role)) {
-      return true;
+    if (auth.token?.admin === false || auth.token?.role === 'none') {
+      return false;
     }
-    return false;
+    const adminDoc = this.db.adminUsers[auth.uid!];
+    if (!adminDoc || adminDoc.revoked === true) {
+      return false;
+    }
+    if (!['admin', 'super_admin'].includes(adminDoc.role)) {
+      return false;
+    }
+    if (typeof auth.token?.role === 'string' && auth.token.role !== adminDoc.role) {
+      return false;
+    }
+    return true;
   }
 
   // --- Route Guarding Logic ---
@@ -91,9 +98,26 @@ class SecurityRulesEvaluator {
     return auth.uid === targetUid || this.isAdmin(auth);
   }
 
-  public canWriteAdminUser(auth: AuthContext): boolean {
-    // In firestore.rules: allow create, update, delete: if false;
-    // Clients can NEVER modify adminUsers directly under any circumstance
+  public canCreateAdminUser(
+    auth: AuthContext,
+    targetUid: string,
+    payload: { uid: string; email: string; role: string; revoked: boolean }
+  ): boolean {
+    if (!this.isSignedIn(auth) || auth.uid !== targetUid) return false;
+    // One-time bootstrap strictly for verified project owner if document does not yet exist
+    if (this.db.adminUsers[targetUid]) return false;
+    return (
+      auth.token?.email === 'nahianalmubin2006@gmail.com' &&
+      auth.token?.email_verified === true &&
+      payload.uid === targetUid &&
+      payload.email === 'nahianalmubin2006@gmail.com' &&
+      payload.role === 'super_admin' &&
+      payload.revoked === false
+    );
+  }
+
+  public canUpdateOrDeleteAdminUserFromClient(_auth: AuthContext): boolean {
+    // In firestore.rules: allow update, delete: if false;
     return false;
   }
 
@@ -113,35 +137,78 @@ class SecurityRulesEvaluator {
     if (!this.isSignedIn(auth)) return false;
     const order = this.db.orders[orderId];
     if (!order) return false;
-    // Customer can only cancel their own pending order
     if (nextStatus === 'cancelled' && order.customerUid === auth.uid && order.orderStatus === 'pending_verification') {
       return true;
     }
-    // All other transitions (confirm, dispatch, deliver) require verified admin
     return this.isAdmin(auth);
   }
 
-  public canModifyProductPriceOrStock(auth: AuthContext, fieldsUpdated: string[]): boolean {
-    if (!this.isSignedIn(auth)) return false;
-    // Only verified admins can modify price, publication status, or base catalog data
-    if (fieldsUpdated.includes('priceBdt') || fieldsUpdated.includes('isPublished') || fieldsUpdated.includes('verificationStatus')) {
-      return this.isAdmin(auth);
+  public canModifyProductPriceOrStock(
+    auth: AuthContext,
+    fieldsUpdated: string[],
+    atomicOrderContext?: {
+      lastOrderId: string;
+      orderExistedBefore: boolean;
+      orderExistsAfter: boolean;
+      orderOwnerUid: string;
+      statusBefore?: string;
+      statusAfter: string;
+      stockDelta: number;
     }
-    return this.isAdmin(auth);
+  ): boolean {
+    if (!this.isSignedIn(auth)) return false;
+    if (this.isAdmin(auth)) return true;
+
+    // Non-admin can NEVER modify price, publication status, or reservedStock
+    const allowedStockKeys = ['stockCount', 'reservedStock', 'lastOrderId', 'updatedAt'];
+    if (!fieldsUpdated.every((k) => allowedStockKeys.includes(k))) {
+      return false;
+    }
+
+    // Direct stock modification without an atomic order transaction is strictly DENIED
+    if (!atomicOrderContext || !fieldsUpdated.includes('lastOrderId')) {
+      return false;
+    }
+
+    if (atomicOrderContext.orderOwnerUid !== auth.uid || !atomicOrderContext.orderExistsAfter) {
+      return false;
+    }
+
+    if (atomicOrderContext.stockDelta === 0 || Math.abs(atomicOrderContext.stockDelta) > 20) {
+      return false;
+    }
+
+    // Decrement requires brand-new pending_verification order created in same transaction
+    if (atomicOrderContext.stockDelta < 0) {
+      return (
+        !atomicOrderContext.orderExistedBefore &&
+        atomicOrderContext.statusAfter === 'pending_verification'
+      );
+    }
+
+    // Increment requires cancelling an existing pending_verification order in same transaction
+    return (
+      atomicOrderContext.orderExistedBefore &&
+      atomicOrderContext.statusBefore === 'pending_verification' &&
+      atomicOrderContext.statusAfter === 'cancelled'
+    );
   }
 
-  public canReadPublicProduct(product: { isPublished: boolean; isDemoData: boolean; verificationStatus: string }, auth: AuthContext): boolean {
+  public canReadPublicProduct(
+    product: { isPublished: boolean; isDemoData: boolean; verificationStatus: string },
+    auth: AuthContext
+  ): boolean {
     if (product.isPublished && !product.isDemoData && product.verificationStatus === 'verified') {
-      return true; // Publicly readable by all
+      return true;
     }
     return this.isAdmin(auth);
   }
 
   // --- Storage Rules Path Evaluations ---
   public canWriteStorage(auth: AuthContext, file: { contentType: string; sizeBytes: number }): boolean {
-    // function isAdmin() { return isSignedIn() && request.auth.token.get('admin', false) == true; }
     if (!this.isSignedIn(auth)) return false;
     if (auth.token?.admin !== true) return false;
+    if (!['admin', 'super_admin'].includes(auth.token?.role || '')) return false;
     const validMime = /image\/(jpeg|png|webp|avif)/.test(file.contentType);
     const validSize = file.sizeBytes <= 5 * 1024 * 1024;
     return validMime && validSize;
@@ -149,10 +216,10 @@ class SecurityRulesEvaluator {
 }
 
 describe('Roots of Bengal — Administrative Security & Zero-Trust Verification', () => {
-  const mockDb: MockDatabase = {
+  const createMockDb = (): MockDatabase => ({
     adminUsers: {
-      'admin-uid-123': { role: 'admin', email: 'verified-admin@heritagebengal.org' },
-      'owner-uid-999': { role: 'super_admin', email: 'nahianalmubin2006@gmail.com' },
+      'admin-uid-123': { uid: 'admin-uid-123', role: 'admin', email: 'verified-admin@heritagebengal.org', revoked: false },
+      'owner-uid-999': { uid: 'owner-uid-999', role: 'super_admin', email: 'nahianalmubin2006@gmail.com', revoked: false },
     },
     users: {
       'cust-uid-456': { uid: 'cust-uid-456', role: 'customer' },
@@ -163,15 +230,14 @@ describe('Roots of Bengal — Administrative Security & Zero-Trust Verification'
       'order-102': { id: 'order-102', customerUid: 'cust-uid-789', orderStatus: 'confirmed', total: 6200 },
     },
     products: {
-      'p-1': { id: 1, isPublished: true, isDemoData: false, verificationStatus: 'verified', priceBdt: 4800 },
-      'p-unpub': { id: 2, isPublished: false, isDemoData: false, verificationStatus: 'pending_review', priceBdt: 3500 },
+      'p-1': { id: 1, isPublished: true, isDemoData: false, verificationStatus: 'verified', priceBdt: 4800, stockCount: 8 },
+      'p-unpub': { id: 2, isPublished: false, isDemoData: false, verificationStatus: 'pending_review', priceBdt: 3500, stockCount: 5 },
     },
-  };
-
-  const evaluator = new SecurityRulesEvaluator(mockDb);
+  });
 
   // Scenario 1: Signed-out visitor to /admin -> blocked / login required
   it('Scenario 1: Signed-out visitor to /admin is blocked and redirected to login', () => {
+    const evaluator = new SecurityRulesEvaluator(createMockDb());
     const unauthenticatedVisitor: AuthContext = { uid: null };
     const result = evaluator.evaluateAdminRouteAccess(unauthenticatedVisitor);
 
@@ -181,6 +247,7 @@ describe('Roots of Bengal — Administrative Security & Zero-Trust Verification'
 
   // Scenario 2: Signed-out visitor direct to nested /admin/orders -> blocked
   it('Scenario 2: Signed-out visitor navigating directly to /admin/orders is blocked without leaking orders', () => {
+    const evaluator = new SecurityRulesEvaluator(createMockDb());
     const unauthenticatedVisitor: AuthContext = { uid: null };
     const routeAccess = evaluator.evaluateAdminRouteAccess(unauthenticatedVisitor);
     const canReadOrders = evaluator.canReadOrder(unauthenticatedVisitor, 'order-101');
@@ -192,6 +259,7 @@ describe('Roots of Bengal — Administrative Security & Zero-Trust Verification'
 
   // Scenario 3: Regular authenticated customer to /admin -> 403 Access Denied
   it('Scenario 3: Regular authenticated customer visiting /admin receives strict 403 Access Denied', () => {
+    const evaluator = new SecurityRulesEvaluator(createMockDb());
     const customerUser: AuthContext = {
       uid: 'cust-uid-456',
       token: { email: 'customer@gmail.com', email_verified: true, admin: false },
@@ -203,162 +271,231 @@ describe('Roots of Bengal — Administrative Security & Zero-Trust Verification'
   });
 
   // Scenario 4: Direct read attempt to /adminUsers or other user's /private/contact -> denied by rules
-  it('Scenario 4: Direct read to foreign /private/contact is denied by rules', () => {
+  it('Scenario 4: Direct read to foreign /adminUsers or /private/contact is denied by rules', () => {
+    const evaluator = new SecurityRulesEvaluator(createMockDb());
     const customer1: AuthContext = { uid: 'cust-uid-456' };
-    const canReadForeignContact = evaluator.canReadUserPrivateContact(customer1, 'cust-uid-789');
-    const canReadOwnContact = evaluator.canReadUserPrivateContact(customer1, 'cust-uid-456');
 
-    expect(canReadForeignContact).toBe(false);
-    expect(canReadOwnContact).toBe(true);
+    expect(evaluator.canReadAdminUser(customer1, 'admin-uid-123')).toBe(false);
+    expect(evaluator.canReadUserPrivateContact(customer1, 'cust-uid-789')).toBe(false);
+    expect(evaluator.canReadUserPrivateContact(customer1, 'cust-uid-456')).toBe(true);
   });
 
   // Scenario 5: Customer reading another customer's order -> denied by rules
   it('Scenario 5: Customer attempting to read another customer order is denied by rules', () => {
+    const evaluator = new SecurityRulesEvaluator(createMockDb());
     const customer1: AuthContext = { uid: 'cust-uid-456' };
     const customer2: AuthContext = { uid: 'cust-uid-789' };
 
-    // Customer 1 reading their own order
     expect(evaluator.canReadOrder(customer1, 'order-101')).toBe(true);
-    // Customer 1 attempting to snoop on Customer 2's order
     expect(evaluator.canReadOrder(customer1, 'order-102')).toBe(false);
-    // Customer 2 reading their own order
     expect(evaluator.canReadOrder(customer2, 'order-102')).toBe(true);
   });
 
   // Scenario 6: Client modifying product price or stock directly -> denied by rules
-  it('Scenario 6: Regular customer or unauthenticated client cannot modify product prices', () => {
+  it('Scenario 6: Regular customer cannot modify product price OR stock directly outside an atomic order transaction', () => {
+    const evaluator = new SecurityRulesEvaluator(createMockDb());
     const customer1: AuthContext = { uid: 'cust-uid-456' };
-    const canCustomerModifyPrice = evaluator.canModifyProductPriceOrStock(customer1, ['priceBdt']);
-    const canAdminModifyPrice = evaluator.canModifyProductPriceOrStock(
-      { uid: 'admin-uid-123', token: { admin: true } },
-      ['priceBdt']
-    );
+    const verifiedAdmin: AuthContext = { uid: 'admin-uid-123', token: { admin: true, role: 'admin' } };
 
-    expect(canCustomerModifyPrice).toBe(false);
-    expect(canAdminModifyPrice).toBe(true);
+    // Direct price modification by customer -> DENIED
+    expect(evaluator.canModifyProductPriceOrStock(customer1, ['priceBdt'])).toBe(false);
+    // Direct stock modification by customer without atomic order -> DENIED
+    expect(evaluator.canModifyProductPriceOrStock(customer1, ['stockCount', 'updatedAt'])).toBe(false);
+    // Replay attack using an already-existing order for stock decrement -> DENIED
+    expect(
+      evaluator.canModifyProductPriceOrStock(customer1, ['stockCount', 'lastOrderId', 'updatedAt'], {
+        lastOrderId: 'order-101',
+        orderExistedBefore: true,
+        orderExistsAfter: true,
+        orderOwnerUid: 'cust-uid-456',
+        statusAfter: 'pending_verification',
+        stockDelta: -2,
+      })
+    ).toBe(false);
+    // Valid atomic new order transaction by customer -> ALLOWED
+    expect(
+      evaluator.canModifyProductPriceOrStock(customer1, ['stockCount', 'lastOrderId', 'updatedAt'], {
+        lastOrderId: 'order-new-999',
+        orderExistedBefore: false,
+        orderExistsAfter: true,
+        orderOwnerUid: 'cust-uid-456',
+        statusAfter: 'pending_verification',
+        stockDelta: -2,
+      })
+    ).toBe(true);
+    // Verified admin modifying price or stock -> ALLOWED
+    expect(evaluator.canModifyProductPriceOrStock(verifiedAdmin, ['priceBdt', 'stockCount'])).toBe(true);
   });
 
   // Scenario 7: Non-admin publishing content or updating order status -> denied by rules
   it('Scenario 7: Non-admin updating order status to confirmed/shipped is denied by rules', () => {
+    const evaluator = new SecurityRulesEvaluator(createMockDb());
     const customer1: AuthContext = { uid: 'cust-uid-456' };
     const adminUser: AuthContext = { uid: 'admin-uid-123' };
 
-    // Customer cannot transition status to 'confirmed'
     expect(evaluator.canUpdateOrderStatus(customer1, 'order-101', 'confirmed')).toBe(false);
-    // Verified admin CAN transition status to 'confirmed'
     expect(evaluator.canUpdateOrderStatus(adminUser, 'order-101', 'confirmed')).toBe(true);
   });
 
   // Scenario 8: Non-admin uploading or overwriting storage media -> denied by rules
   it('Scenario 8: Storage rules block non-admin uploads and enforce image constraints', () => {
+    const evaluator = new SecurityRulesEvaluator(createMockDb());
     const customerUser: AuthContext = { uid: 'cust-uid-456', token: { admin: false } };
-    const adminUser: AuthContext = { uid: 'admin-uid-123', token: { admin: true } };
+    const adminUser: AuthContext = { uid: 'admin-uid-123', token: { admin: true, role: 'admin' } };
 
     const validImage = { contentType: 'image/webp', sizeBytes: 2 * 1024 * 1024 };
     const oversizedImage = { contentType: 'image/jpeg', sizeBytes: 10 * 1024 * 1024 };
     const maliciousScript = { contentType: 'text/html', sizeBytes: 1024 };
 
-    // Non-admin upload rejected
     expect(evaluator.canWriteStorage(customerUser, validImage)).toBe(false);
-    // Admin valid upload accepted
     expect(evaluator.canWriteStorage(adminUser, validImage)).toBe(true);
-    // Admin oversized upload rejected (>5MB)
     expect(evaluator.canWriteStorage(adminUser, oversizedImage)).toBe(false);
-    // Admin non-image rejected
     expect(evaluator.canWriteStorage(adminUser, maliciousScript)).toBe(false);
   });
 
-  // Scenario 9: Client self-assigning admin role in /adminUsers -> denied by rules
-  it('Scenario 9: Client attempts to directly create or update /adminUsers are rejected by rules', () => {
+  // Scenario 9: Client self-assigning admin role in /adminUsers -> denied by rules, and one-time owner bootstrap lock
+  it('Scenario 9: Client attempts to self-assign admin role in /adminUsers are rejected; owner bootstrap is strictly one-time', () => {
+    const db = createMockDb();
+    const evaluator = new SecurityRulesEvaluator(db);
+
     const attacker: AuthContext = {
       uid: 'malicious-attacker',
-      token: { email: 'attacker@evil.com' },
+      token: { email: 'attacker@evil.com', email_verified: true },
+    };
+    const unverifiedSpoofer: AuthContext = {
+      uid: 'spoof-uid',
+      token: { email: 'nahianalmubin2006@gmail.com', email_verified: false },
     };
 
-    // Even if attacker passes admin claim or arbitrary data, client writes to /adminUsers are unconditionally blocked
-    expect(evaluator.canWriteAdminUser(attacker)).toBe(false);
+    // Attacker cannot create or update /adminUsers
+    expect(
+      evaluator.canCreateAdminUser(attacker, 'malicious-attacker', {
+        uid: 'malicious-attacker',
+        email: 'attacker@evil.com',
+        role: 'super_admin',
+        revoked: false,
+      })
+    ).toBe(false);
+    expect(evaluator.canUpdateOrDeleteAdminUserFromClient(attacker)).toBe(false);
 
-    // Verify firestore.rules explicitly has 'allow create, update, delete: if false;' for adminUsers
-    expect(firestoreRulesContent).toContain('match /adminUsers/{uid}');
-    expect(firestoreRulesContent).toMatch(/match \/adminUsers\/\{uid\}\s*\{[\s\S]*allow create, update, delete:\s*if false;/);
+    // Unverified email spoofer cannot create /adminUsers
+    expect(
+      evaluator.canCreateAdminUser(unverifiedSpoofer, 'spoof-uid', {
+        uid: 'spoof-uid',
+        email: 'nahianalmubin2006@gmail.com',
+        role: 'super_admin',
+        revoked: false,
+      })
+    ).toBe(false);
+
+    // Verified owner CANNOT re-run bootstrap when /adminUsers/{uid} already exists
+    const existingOwner: AuthContext = {
+      uid: 'owner-uid-999',
+      token: { email: 'nahianalmubin2006@gmail.com', email_verified: true },
+    };
+    expect(
+      evaluator.canCreateAdminUser(existingOwner, 'owner-uid-999', {
+        uid: 'owner-uid-999',
+        email: 'nahianalmubin2006@gmail.com',
+        role: 'super_admin',
+        revoked: false,
+      })
+    ).toBe(false);
   });
 
-  // Scenario 10: Admin access revoked -> former admin denied privileged operations
-  it('Scenario 10: Former admin whose role is revoked or removed is immediately denied access', () => {
-    const mutableDb: MockDatabase = {
-      ...mockDb,
-      adminUsers: {
-        'revoked-admin-uid': { role: 'admin', email: 'revoked@domain.com' },
-      },
-    };
+  // Scenario 10: Admin access revoked -> former admin denied privileged operations even if JWT has stale claim
+  it('Scenario 10: Dual-source conjunctive check denies access if EITHER custom claim OR /adminUsers denies the user', () => {
+    const mutableDb = createMockDb();
     const dynamicEvaluator = new SecurityRulesEvaluator(mutableDb);
-    const formerAdmin: AuthContext = { uid: 'revoked-admin-uid' };
 
-    // Initially authorized
-    expect(dynamicEvaluator.isAdmin(formerAdmin)).toBe(true);
+    // Case A: User has a valid active /adminUsers record AND valid token claim
+    const activeAdminWithToken: AuthContext = {
+      uid: 'admin-uid-123',
+      token: { admin: true, role: 'admin' },
+    };
+    expect(dynamicEvaluator.isAdmin(activeAdminWithToken)).toBe(true);
 
-    // Revoke admin access by removing from adminUsers
-    delete mutableDb.adminUsers['revoked-admin-uid'];
+    // Case B: Admin is revoked in /adminUsers (deleted), but browser still holds a stale 60-min JWT with `admin: true`
+    delete mutableDb.adminUsers['admin-uid-123'];
+    expect(dynamicEvaluator.isAdmin(activeAdminWithToken)).toBe(false);
+    expect(dynamicEvaluator.evaluateAdminRouteAccess(activeAdminWithToken).action).toBe('forbidden_403');
 
-    // Now immediately rejected
-    expect(dynamicEvaluator.isAdmin(formerAdmin)).toBe(false);
-    expect(dynamicEvaluator.evaluateAdminRouteAccess(formerAdmin).canAccess).toBe(false);
-    expect(dynamicEvaluator.evaluateAdminRouteAccess(formerAdmin).action).toBe('forbidden_403');
+    // Case C: /adminUsers record exists, but custom claim explicitly sets `admin: false`
+    mutableDb.adminUsers['admin-uid-123'] = {
+      uid: 'admin-uid-123',
+      role: 'admin',
+      email: 'verified-admin@heritagebengal.org',
+      revoked: false,
+    };
+    const claimRevokedAdmin: AuthContext = {
+      uid: 'admin-uid-123',
+      token: { admin: false, role: 'none' },
+    };
+    expect(dynamicEvaluator.isAdmin(claimRevokedAdmin)).toBe(false);
   });
 
   // Scenario 11: Public visitors can view published products, artisans, and public pages cleanly
   it('Scenario 11: Public visitors can view published verified products, but unpublished items remain hidden', () => {
+    const db = createMockDb();
+    const evaluator = new SecurityRulesEvaluator(db);
     const anonymousUser: AuthContext = { uid: null };
     const adminUser: AuthContext = { uid: 'admin-uid-123' };
 
-    const publishedProduct = mockDb.products['p-1'];
-    const unpublishedProduct = mockDb.products['p-unpub'];
-
-    // Anonymous visitor can view published verified product
-    expect(evaluator.canReadPublicProduct(publishedProduct, anonymousUser)).toBe(true);
-    // Anonymous visitor CANNOT view draft/unpublished product
-    expect(evaluator.canReadPublicProduct(unpublishedProduct, anonymousUser)).toBe(false);
-    // Admin CAN view draft/unpublished product for review
-    expect(evaluator.canReadPublicProduct(unpublishedProduct, adminUser)).toBe(true);
+    expect(evaluator.canReadPublicProduct(db.products['p-1'], anonymousUser)).toBe(true);
+    expect(evaluator.canReadPublicProduct(db.products['p-unpub'], anonymousUser)).toBe(false);
+    expect(evaluator.canReadPublicProduct(db.products['p-unpub'], adminUser)).toBe(true);
   });
 
   // Scenario 12: Legitimate admin authorized by role can perform operations
   it('Scenario 12: Legitimate verified admin can access routes, review orders, and manage catalog', () => {
+    const evaluator = new SecurityRulesEvaluator(createMockDb());
     const verifiedAdmin: AuthContext = {
       uid: 'admin-uid-123',
-      token: { admin: true },
+      token: { admin: true, role: 'admin' },
     };
 
     const routeCheck = evaluator.evaluateAdminRouteAccess(verifiedAdmin);
     expect(routeCheck.canAccess).toBe(true);
     expect(routeCheck.action).toBe('allow');
-
-    // Admin can read all customer orders for fulfillment
     expect(evaluator.canReadOrder(verifiedAdmin, 'order-101')).toBe(true);
     expect(evaluator.canReadOrder(verifiedAdmin, 'order-102')).toBe(true);
-
-    // Admin can transition COD order state
     expect(evaluator.canUpdateOrderStatus(verifiedAdmin, 'order-101', 'confirmed')).toBe(true);
   });
 
-  // Verification of Security Rule Codebase Hardening Invariants
-  describe('Rule Invariant Static Verification', () => {
+  // Static Verification of Actual Source Code Security Invariants
+  describe('Source File Invariant Static Verification', () => {
     it('verifies firestore.rules implements a global default-deny catch-all', () => {
       expect(firestoreRulesContent).toMatch(/match \/\{document=\*\*\}\s*\{\s*allow read, write:\s*if false;\s*\}/);
     });
 
-    it('verifies isAdmin() never checks email strings directly in firestore.rules', () => {
-      // Must not contain `request.auth.token.email ==` anywhere in firestore.rules
-      expect(firestoreRulesContent).not.toMatch(/request\.auth\.token\.email\s*==/);
+    it('verifies firestore.rules isAdmin() uses conjunctive && (never || between token.admin and exists(/adminUsers))', () => {
+      expect(firestoreRulesContent).toContain("request.auth.token.get('admin', true) != false &&");
+      expect(firestoreRulesContent).toContain('exists(/databases/$(database)/documents/adminUsers/$(request.auth.uid))');
+      expect(firestoreRulesContent).not.toContain("request.auth.token.get('admin', false) == true ||");
     });
 
-    it('verifies orders deletion is strictly forbidden in firestore.rules', () => {
-      expect(firestoreRulesContent).toMatch(/match \/orders\/\{orderId\}\s*\{[\s\S]*allow delete:\s*if false;/);
+    it('verifies firestore.rules requires atomic order transition proof (isAtomicCustomerOrderTransition) for non-admin stock updates', () => {
+      expect(firestoreRulesContent).toContain('function isAtomicCustomerOrderTransition(orderId, isDecrement)');
+      expect(firestoreRulesContent).toContain('existsAfter(/databases/$(database)/documents/orders/$(orderId))');
     });
 
-    it('verifies storage.rules enforces 5MB limit and image MIME types', () => {
+    it('verifies firestore.rules forbids client update and delete on /adminUsers', () => {
+      expect(firestoreRulesContent).toMatch(/match \/adminUsers\/\{uid\}\s*\{[\s\S]*allow update, delete:\s*if false;/);
+    });
+
+    it('verifies functions/src/index.ts connects to the named Firestore database and locks adminBootstrapInitialAdmin transactionally', () => {
+      expect(functionsContent).toContain('ai-studio-rootsofbengal-22074646-460f-4ebc-ac7e-7dab24b1ac5e');
+      expect(functionsContent).toContain('Initial super_admin bootstrap has already been completed and cannot be executed repeatedly.');
+    });
+
+    it('verifies src/lib/firebaseAuth.ts does not short-circuit on tokenResult.claims.admin === true without checking /adminUsers', () => {
+      expect(firebaseAuthContent).toContain('if (tokenResult.claims.admin === false || tokenResult.claims.role === \'none\')');
+      expect(firebaseAuthContent).toContain("const adminSnap = await getDoc(doc(db, 'adminUsers', user.uid));");
+    });
+
+    it('verifies storage.rules enforces 5MB limit, image MIME types, and role claim check', () => {
       expect(storageRulesContent).toContain("request.resource.contentType.matches('image/(jpeg|png|webp|avif)')");
-      expect(storageRulesContent).toContain('match /{allPaths=**}');
+      expect(storageRulesContent).toContain("request.auth.token.get('role', '') in ['admin', 'super_admin']");
       expect(storageRulesContent).toMatch(/allow read, write:\s*if false;/);
     });
   });

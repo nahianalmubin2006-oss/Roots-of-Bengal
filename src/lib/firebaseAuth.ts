@@ -2,7 +2,7 @@ import {
   GoogleAuthProvider,
   signInWithPopup,
   signOut as firebaseSignOut,
-  onAuthStateChanged,
+  onIdTokenChanged,
   User,
 } from 'firebase/auth';
 import {
@@ -10,6 +10,7 @@ import {
   getDoc,
   setDoc,
   serverTimestamp,
+  Timestamp,
 } from 'firebase/firestore';
 import { httpsCallable } from 'firebase/functions';
 import { auth, db, functions, handleFirestoreError, OperationType } from './firebase';
@@ -33,28 +34,65 @@ export interface AppUserProfile {
 }
 
 /**
- * Server-backed verification of administrative credentials.
- * Checks Firebase Custom User Claims and the protected /adminUsers collection.
- * NEVER trusts client-side storage, localStorage, or unverified email strings.
+ * Zero-Trust Server-Backed Verification of Administrative Credentials.
+ *
+ * Security Invariants:
+ * 1. NEVER trusts client-side storage, localStorage, or bare email strings.
+ * 2. If custom user claims explicitly deny admin access (`claims.admin === false` or `claims.role === 'none'`),
+ *    immediately denies access even if a stale Firestore document exists.
+ * 3. ALWAYS verifies the live `/adminUsers/{uid}` Firestore document (`exists()`, `revoked !== true`,
+ *    and `role in ['admin', 'super_admin']`) so that revoking a role in Firestore takes effect
+ *    immediately without waiting for a 60-minute JWT to expire.
  */
-export async function checkIsUserAdmin(user: User | null): Promise<{ isAdmin: boolean; role?: 'admin' | 'super_admin' }> {
+export async function checkIsUserAdmin(
+  user: User | null
+): Promise<{ isAdmin: boolean; role?: 'admin' | 'super_admin' }> {
   if (!user) return { isAdmin: false };
 
   try {
-    // 1. Check custom user claims
+    // 1. Inspect Firebase Auth ID token claims for explicit denial
     const tokenResult = await user.getIdTokenResult();
-    if (tokenResult.claims.admin === true) {
-      const role = (tokenResult.claims.role as 'admin' | 'super_admin') || 'admin';
-      return { isAdmin: true, role };
+    if (tokenResult.claims.admin === false || tokenResult.claims.role === 'none') {
+      return { isAdmin: false };
     }
 
-    // 2. Check protected /adminUsers/{uid} collection
+    // 2. Always verify the authoritative /adminUsers/{uid} record in Firestore
     const adminSnap = await getDoc(doc(db, 'adminUsers', user.uid));
-    if (adminSnap.exists()) {
-      const data = adminSnap.data();
-      if (data?.role === 'admin' || data?.role === 'super_admin') {
-        return { isAdmin: true, role: data.role };
+
+    // One-time automatic bootstrap if the verified repository owner signs in before /adminUsers/{uid} exists
+    if (!adminSnap.exists() && user.email === DESIGNATED_OWNER_EMAIL && user.emailVerified) {
+      try {
+        await setDoc(doc(db, 'adminUsers', user.uid), {
+          uid: user.uid,
+          email: user.email,
+          role: 'super_admin',
+          revoked: false,
+          grantedAt: serverTimestamp(),
+        });
+        return { isAdmin: true, role: 'super_admin' };
+      } catch {
+        return { isAdmin: false };
       }
+    }
+
+    if (!adminSnap.exists()) {
+      return { isAdmin: false };
+    }
+
+    const data = adminSnap.data();
+    if (data?.revoked === true) {
+      return { isAdmin: false };
+    }
+
+    if (data?.role === 'admin' || data?.role === 'super_admin') {
+      // Ensure token role claim (if present) does not conflict
+      if (
+        typeof tokenResult.claims.role === 'string' &&
+        tokenResult.claims.role !== data.role
+      ) {
+        return { isAdmin: false };
+      }
+      return { isAdmin: true, role: data.role };
     }
   } catch {
     // On permission denied or network error, fail closed
@@ -65,12 +103,24 @@ export async function checkIsUserAdmin(user: User | null): Promise<{ isAdmin: bo
 }
 
 /**
- * Allows the verified project owner to claim their initial super_admin role.
- * Attempts server-side Cloud Function first, with safe fallback.
+ * Allows the verified project owner to claim their initial super_admin role ONCE.
+ * Enforces one-time execution lock: rejects if /adminUsers/{uid} already exists.
  */
-export async function bootstrapOwnerAdmin(user: User): Promise<{ success: boolean; message: string }> {
+export async function bootstrapOwnerAdmin(
+  user: User
+): Promise<{ success: boolean; message: string }> {
   if (user.email !== DESIGNATED_OWNER_EMAIL || !user.emailVerified) {
-    throw new Error('Only the verified repository owner may claim the initial admin credentials.');
+    throw new Error(
+      'Only the verified repository owner account may claim the initial admin credentials.'
+    );
+  }
+
+  const adminRef = doc(db, 'adminUsers', user.uid);
+  const existingSnap = await getDoc(adminRef);
+  if (existingSnap.exists()) {
+    throw new Error(
+      'Initial super_admin bootstrap has already been completed and cannot be executed repeatedly.'
+    );
   }
 
   try {
@@ -81,19 +131,23 @@ export async function bootstrapOwnerAdmin(user: User): Promise<{ success: boolea
       success: true,
       message: res.data?.message || 'Admin credentials established successfully.',
     };
-  } catch {
-    // Fallback in environments where Cloud Functions are not deployed yet
-    const adminRef = doc(db, 'adminUsers', user.uid);
+  } catch (err: any) {
+    if (err?.code === 'functions/already-exists' || err?.message?.includes('already been completed')) {
+      throw new Error('Initial super_admin bootstrap has already been completed.');
+    }
+
+    // One-time Firestore rule-guarded create when Cloud Functions are not yet deployed
     await setDoc(adminRef, {
       uid: user.uid,
       email: user.email,
       role: 'super_admin',
+      revoked: false,
       grantedAt: serverTimestamp(),
-    }, { merge: true });
+    });
 
     return {
       success: true,
-      message: 'Owner initial admin credentials recorded in /adminUsers.',
+      message: 'One-time owner super_admin credentials recorded in /adminUsers.',
     };
   }
 }
@@ -109,8 +163,12 @@ export async function syncUserProfileToFirestore(
 
   try {
     const existingSnap = await getDoc(userRef);
-    const displayName = (user.displayName || user.email?.split('@')[0] || 'Heritage Patron').slice(0, 100);
-    const email = user.email || '';
+    const displayName = (
+      user.displayName?.trim() ||
+      user.email?.split('@')[0]?.trim() ||
+      'Heritage Patron'
+    ).slice(0, 100);
+    const email = (user.email || '').trim().slice(0, 160);
     // Public user documents always store role 'customer' to prevent self-assigned privilege escalation
     const role = 'customer';
 
@@ -126,18 +184,34 @@ export async function syncUserProfileToFirestore(
       });
     } else {
       const existingData = existingSnap.data();
-      await setDoc(
-        userRef,
-        {
-          uid: user.uid,
-          displayName: existingData.displayName || displayName,
-          email: existingData.email || email,
-          role: 'customer',
-          preferredLanguage: existingData.preferredLanguage || normalizedLang,
-          createdAt: existingData.createdAt || serverTimestamp(),
-          updatedAt: serverTimestamp(),
-        }
-      );
+      const safeDisplayName = (
+        typeof existingData.displayName === 'string' && existingData.displayName.trim().length > 0
+          ? existingData.displayName.trim()
+          : displayName
+      ).slice(0, 100);
+      const safeEmail = (
+        typeof existingData.email === 'string' && existingData.email.trim().length > 0
+          ? existingData.email.trim()
+          : email
+      ).slice(0, 160);
+      const safeLang: 'en' | 'bn' =
+        existingData.preferredLanguage === 'bn' || existingData.preferredLanguage === 'en'
+          ? existingData.preferredLanguage
+          : normalizedLang;
+      const safeCreatedAt =
+        existingData.createdAt instanceof Timestamp
+          ? existingData.createdAt
+          : serverTimestamp();
+
+      await setDoc(userRef, {
+        uid: user.uid,
+        displayName: safeDisplayName,
+        email: safeEmail,
+        role: 'customer',
+        preferredLanguage: safeLang,
+        createdAt: safeCreatedAt,
+        updatedAt: serverTimestamp(),
+      });
     }
 
     let privateData: Record<string, string> = {};
@@ -154,7 +228,7 @@ export async function syncUserProfileToFirestore(
       uid: user.uid,
       displayName,
       email,
-      role: adminCheck.isAdmin ? (adminCheck.role || 'admin') : 'customer',
+      role: adminCheck.isAdmin ? adminCheck.role || 'admin' : 'customer',
       preferredLanguage: normalizedLang,
       phone: privateData.phone || '',
       defaultAddress: privateData.defaultAddress || '',
@@ -181,18 +255,15 @@ export async function saveUserPrivateContact(
 ): Promise<void> {
   const privateRef = doc(db, 'users', uid, 'private', 'contact');
   try {
-    await setDoc(
-      privateRef,
-      {
-        uid,
-        phone: (contact.phone || '').trim(),
-        defaultAddress: (contact.defaultAddress || '').trim().slice(0, 500),
-        district: (contact.district || '').trim().slice(0, 80),
-        thana: (contact.thana || '').trim().slice(0, 80),
-        postalCode: (contact.postalCode || '').trim().slice(0, 20),
-        updatedAt: serverTimestamp(),
-      }
-    );
+    await setDoc(privateRef, {
+      uid,
+      phone: (contact.phone || '').replace(/[\s-]/g, ''),
+      defaultAddress: (contact.defaultAddress || '').trim().slice(0, 500),
+      district: (contact.district || '').trim().slice(0, 80),
+      thana: (contact.thana || '').trim().slice(0, 80),
+      postalCode: (contact.postalCode || '').trim().slice(0, 20),
+      updatedAt: serverTimestamp(),
+    });
   } catch (err) {
     handleFirestoreError(err, OperationType.WRITE, `users/${uid}/private/contact`);
   }
@@ -209,6 +280,10 @@ export async function signOutUser(): Promise<void> {
   await firebaseSignOut(auth);
 }
 
+/**
+ * Subscribes to both authentication state changes AND ID token refreshes/expirations
+ * so role revocations or token updates trigger immediate re-verification.
+ */
 export function subscribeToAuthChanges(callback: (user: User | null) => void): () => void {
-  return onAuthStateChanged(auth, callback);
+  return onIdTokenChanged(auth, callback);
 }

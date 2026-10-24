@@ -113,29 +113,52 @@ export default function App() {
     }, 2600);
   };
 
-  // Admin routing state based on URL path
-  const getAdminSubpath = (pathname: string): 'dashboard' | 'products' | 'orders' | 'login' => {
-    if (pathname.includes('/admin/products')) return 'products';
-    if (pathname.includes('/admin/orders')) return 'orders';
-    if (pathname.includes('/admin/login')) return 'login';
-    return 'dashboard';
+  // Admin routing state based strictly on URL path (/admin/*) or URL hash (/#/admin/*)
+  const resolveCurrentUrlRoute = (): {
+    isAdmin: boolean;
+    subpath: 'dashboard' | 'products' | 'orders' | 'login';
+  } => {
+    if (typeof window === 'undefined') {
+      return { isAdmin: false, subpath: 'dashboard' };
+    }
+    const pathname = window.location.pathname || '';
+    const hash = (window.location.hash || '').replace(/^#\/?/, '/');
+    const targetPath = pathname.startsWith('/admin')
+      ? pathname
+      : hash.startsWith('/admin')
+      ? hash
+      : '';
+
+    if (!targetPath) {
+      return { isAdmin: false, subpath: 'dashboard' };
+    }
+
+    if (targetPath.includes('/admin/products')) {
+      return { isAdmin: true, subpath: 'products' };
+    }
+    if (targetPath.includes('/admin/orders')) {
+      return { isAdmin: true, subpath: 'orders' };
+    }
+    if (targetPath.includes('/admin/login')) {
+      return { isAdmin: true, subpath: 'login' };
+    }
+    return { isAdmin: true, subpath: 'dashboard' };
   };
 
-  const [isAdminRoute, setIsAdminRoute] = useState<boolean>(() => {
-    return typeof window !== 'undefined' && window.location.pathname.startsWith('/admin');
-  });
+  const [isAdminRoute, setIsAdminRoute] = useState<boolean>(() => resolveCurrentUrlRoute().isAdmin);
 
-  const [adminSubpath, setAdminSubpath] = useState<'dashboard' | 'products' | 'orders' | 'login'>(() => {
-    return typeof window !== 'undefined' ? getAdminSubpath(window.location.pathname) : 'dashboard';
-  });
+  const [adminSubpath, setAdminSubpath] = useState<'dashboard' | 'products' | 'orders' | 'login'>(
+    () => resolveCurrentUrlRoute().subpath
+  );
 
   // Track auth loading & raw user object for token refreshes
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [authLoading, setAuthLoading] = useState<boolean>(true);
 
-  // Subscribe to Firebase Authentication state with zero email trust
+  // Subscribe to Firebase Authentication & ID token state with zero email trust
   useEffect(() => {
     const unsub = subscribeToAuthChanges(async (firebaseUser) => {
+      setAuthLoading(true);
       setCurrentUser(firebaseUser);
       if (!firebaseUser) {
         setUserProfile(null);
@@ -165,19 +188,19 @@ export default function App() {
     return () => unsub();
   }, [language]);
 
-  // Listen to popstate for URL-driven admin routing
+  // Listen to popstate and hashchange for URL-driven admin routing
   useEffect(() => {
-    const handlePopState = () => {
-      const path = window.location.pathname;
-      if (path.startsWith('/admin')) {
-        setIsAdminRoute(true);
-        setAdminSubpath(getAdminSubpath(path));
-      } else {
-        setIsAdminRoute(false);
-      }
+    const handleUrlRouteChange = () => {
+      const resolved = resolveCurrentUrlRoute();
+      setIsAdminRoute(resolved.isAdmin);
+      setAdminSubpath(resolved.subpath);
     };
-    window.addEventListener('popstate', handlePopState);
-    return () => window.removeEventListener('popstate', handlePopState);
+    window.addEventListener('popstate', handleUrlRouteChange);
+    window.addEventListener('hashchange', handleUrlRouteChange);
+    return () => {
+      window.removeEventListener('popstate', handleUrlRouteChange);
+      window.removeEventListener('hashchange', handleUrlRouteChange);
+    };
   }, []);
 
   // Subscribe to live Firestore Catalog (products + variants)
@@ -262,13 +285,21 @@ export default function App() {
   const handleNavigateAdmin = (subpath: 'dashboard' | 'products' | 'orders') => {
     setAdminSubpath(subpath);
     const nextPath = subpath === 'dashboard' ? '/admin' : `/admin/${subpath}`;
-    window.history.pushState(null, '', nextPath);
+    if (window.location.hash.startsWith('#/admin') || window.location.hash.startsWith('#admin')) {
+      window.location.hash = `#${nextPath}`;
+    } else {
+      window.history.pushState(null, '', nextPath);
+    }
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
   const handleExitAdmin = () => {
     setIsAdminRoute(false);
-    window.history.pushState(null, '', '/');
+    if (window.location.hash) {
+      window.history.pushState(null, '', window.location.pathname.startsWith('/admin') ? '/' : window.location.pathname);
+    } else {
+      window.history.pushState(null, '', '/');
+    }
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 

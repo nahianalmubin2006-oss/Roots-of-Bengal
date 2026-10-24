@@ -1,7 +1,7 @@
 import React from 'react';
 import { ShieldAlert, LogOut, ArrowLeft } from 'lucide-react';
 import { User } from 'firebase/auth';
-import { AppUserProfile } from '../../lib/firebaseAuth';
+import { AppUserProfile, DESIGNATED_OWNER_EMAIL } from '../../lib/firebaseAuth';
 import { AdminLoginPage } from './AdminLoginPage';
 
 interface AdminLayoutProps {
@@ -47,11 +47,16 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({
     );
   }
 
-  // 2. If unauthenticated, render dedicated Admin Login
-  if (!user) {
+  // 2. If unauthenticated, or if the verified owner is completing one-time initial bootstrap, render AdminLoginPage
+  if (
+    !user ||
+    (!userProfile?.isAdmin &&
+      user.email === DESIGNATED_OWNER_EMAIL &&
+      user.emailVerified)
+  ) {
     return (
       <AdminLoginPage
-        user={null}
+        user={user}
         onSignIn={onSignIn}
         onSignOut={onSignOut}
         onExit={onExitAdmin}

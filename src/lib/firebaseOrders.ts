@@ -268,17 +268,19 @@ export async function createLiveCodOrder(
       const orderReference = generateServerOrderReference();
       const now = serverTimestamp();
 
-      // 1. Update stock counts on products and variants
+      // 1. Update stock counts on products and variants with atomic lastOrderId proof
       for (const line of validatedLines) {
         tx.update(line.prodRef, {
           stockCount: line.nextProdStock,
           reservedStock: line.nextProdReserved,
+          lastOrderId: orderId,
           updatedAt: now,
         });
         tx.update(line.varRef, {
           stockCount: line.nextVarStock,
           reservedStock: line.nextVarReserved,
           isAvailable: line.nextVarStock > 0,
+          lastOrderId: orderId,
           updatedAt: now,
         });
       }
@@ -458,6 +460,7 @@ export async function cancelLiveCodOrder(orderId: string, reason = 'Cancelled by
           tx.update(sr.prodRef, {
             stockCount: Number(pData.stockCount ?? 0) + Number(sr.item.quantity),
             reservedStock: Number(pData.reservedStock ?? 0),
+            lastOrderId: orderId,
             updatedAt: now,
           });
         }
@@ -468,6 +471,7 @@ export async function cancelLiveCodOrder(orderId: string, reason = 'Cancelled by
             stockCount: nextStock,
             reservedStock: Number(vData.reservedStock ?? 0),
             isAvailable: nextStock > 0,
+            lastOrderId: orderId,
             updatedAt: now,
           });
         }
@@ -555,75 +559,90 @@ export function subscribeToUserOrders(
 ): () => void {
   const ordersCol = collection(db, 'orders');
   const q = isAdminMode
-    ? query(ordersCol, orderBy('createdAt', 'desc'))
-    : query(ordersCol, where('customerUid', '==', uid), orderBy('createdAt', 'desc'));
+    ? query(ordersCol)
+    : query(ordersCol, where('customerUid', '==', uid));
 
   return onSnapshot(
     q,
     async (snapshot) => {
-      const records: OrderRecord[] = await Promise.all(
-        snapshot.docs.map(async (docSnap) => {
-          const d = docSnap.data();
-          const itemsSnap = await getDocs(collection(db, 'orders', docSnap.id, 'items'));
-          const items = itemsSnap.docs.map((iDoc) => {
-            const idata = iDoc.data();
-            const numericId = Number(String(idata.productId).replace('prod_', '')) || 1;
+      try {
+        const sortedDocs = [...snapshot.docs].sort((a, b) => {
+          const aTime = a.data().createdAt instanceof Timestamp ? a.data().createdAt.toMillis() : 0;
+          const bTime = b.data().createdAt instanceof Timestamp ? b.data().createdAt.toMillis() : 0;
+          return bTime - aTime;
+        });
+
+        const records: OrderRecord[] = await Promise.all(
+          sortedDocs.map(async (docSnap) => {
+            const d = docSnap.data();
+            let items: OrderRecord['items'] = [];
+            try {
+              const itemsSnap = await getDocs(collection(db, 'orders', docSnap.id, 'items'));
+              items = itemsSnap.docs.map((iDoc) => {
+                const idata = iDoc.data();
+                const numericId = Number(String(idata.productId).replace('prod_', '')) || 1;
+                return {
+                  productId: numericId,
+                  firestoreProductId: idata.productId,
+                  variantId: idata.variantId,
+                  sku: idata.sku,
+                  name: idata.productNameEn || idata.productNameSnapshot || 'Heritage Craft',
+                  variantLabel: idata.variantLabelEn || idata.variantLabelSnapshot || 'Standard',
+                  quantity: idata.quantity,
+                  unitPrice: idata.unitPriceBdt,
+                  unitPriceMinorUnits: idata.unitPriceMinorUnits ?? idata.unitPricePoisha ?? 0,
+                  lineTotalMinorUnits: idata.lineTotalMinorUnits ?? idata.lineTotalPoisha ?? 0,
+                };
+              });
+            } catch {
+              items = [];
+            }
+
             return {
-              productId: numericId,
-              firestoreProductId: idata.productId,
-              variantId: idata.variantId,
-              sku: idata.sku,
-              name: idata.productNameEn,
-              variantLabel: idata.variantLabelEn,
-              quantity: idata.quantity,
-              unitPrice: idata.unitPriceBdt,
-              unitPriceMinorUnits: idata.unitPriceMinorUnits,
-              lineTotalMinorUnits: idata.lineTotalMinorUnits,
+              orderId: d.id || docSnap.id,
+              orderReference: d.orderReference || d.publicOrderNumber || docSnap.id,
+              idempotencyKey: d.idempotencyKey || '',
+              customerUid: d.customerUid,
+              createdAt: formatFirestoreTimestamp(d.createdAt),
+              updatedAt: formatFirestoreTimestamp(d.updatedAt),
+              market: 'BD',
+              currencySymbol: '৳',
+              customerName: d.customerName || 'Patron',
+              customerEmail: d.customerEmail || '',
+              customerPhone: d.customerPhone || '',
+              shippingAddress: d.shippingAddress || d.deliveryAddress || '',
+              cityOrDistrict: d.thana ? `${d.thana}, ${d.district}` : d.cityOrDistrict || d.district || '',
+              thana: d.thana || '',
+              postalCode: d.postalCode || '',
+              deliveryInstructions: d.deliveryInstructions || d.customerNotes || '',
+              deliveryZone: d.deliveryZone || 'dhaka_metro',
+              deliveryMethodLabel:
+                d.deliveryZone === 'dhaka_metro'
+                  ? 'Inside Dhaka Metro Courier (2–3 Days)'
+                  : 'Outside Dhaka Nationwide Courier (4–6 Days)',
+              paymentMethod: 'COD',
+              paymentMethodLabel:
+                d.paymentStatus === 'collected_cod'
+                  ? 'Cash on Delivery (COD — Collected)'
+                  : 'Cash on Delivery (COD — Unpaid)',
+              paymentStatus: d.paymentStatus || 'unpaid_cod',
+              orderStatus: d.orderStatus || 'pending_verification',
+              items,
+              subtotal: d.subtotalBdt ?? 0,
+              shippingCost: d.shippingBdt ?? 80,
+              total: d.totalBdt ?? 0,
+              subtotalMinorUnits: d.subtotalMinorUnits ?? d.subtotalPoisha ?? 0,
+              shippingMinorUnits: d.shippingMinorUnits ?? d.shippingPoisha ?? 0,
+              totalMinorUnits: d.totalMinorUnits ?? d.totalPoisha ?? 0,
+              isDemoOrder: false,
             };
-          });
+          })
+        );
 
-          return {
-            orderId: d.id,
-            orderReference: d.orderReference,
-            idempotencyKey: d.idempotencyKey,
-            customerUid: d.customerUid,
-            createdAt: formatFirestoreTimestamp(d.createdAt),
-            updatedAt: formatFirestoreTimestamp(d.updatedAt),
-            market: 'BD',
-            currencySymbol: '৳',
-            customerName: d.customerName,
-            customerEmail: d.customerEmail || '',
-            customerPhone: d.customerPhone,
-            shippingAddress: d.shippingAddress,
-            cityOrDistrict: `${d.thana}, ${d.district}`,
-            thana: d.thana,
-            postalCode: d.postalCode || '',
-            deliveryInstructions: d.deliveryInstructions || '',
-            deliveryZone: d.deliveryZone,
-            deliveryMethodLabel:
-              d.deliveryZone === 'dhaka_metro'
-                ? 'Inside Dhaka Metro Courier (2–3 Days)'
-                : 'Outside Dhaka Nationwide Courier (4–6 Days)',
-            paymentMethod: 'COD',
-            paymentMethodLabel:
-              d.paymentStatus === 'collected_cod'
-                ? 'Cash on Delivery (COD — Collected)'
-                : 'Cash on Delivery (COD — Unpaid)',
-            paymentStatus: d.paymentStatus,
-            orderStatus: d.orderStatus,
-            items,
-            subtotal: d.subtotalBdt,
-            shippingCost: d.shippingBdt,
-            total: d.totalBdt,
-            subtotalMinorUnits: d.subtotalMinorUnits,
-            shippingMinorUnits: d.shippingMinorUnits,
-            totalMinorUnits: d.totalMinorUnits,
-            isDemoOrder: false,
-          };
-        })
-      );
-
-      onOrders(records);
+        onOrders(records);
+      } catch {
+        onOrders([]);
+      }
     },
     () => {
       onOrders([]);
@@ -631,13 +650,22 @@ export function subscribeToUserOrders(
   );
 }
 
-export async function getOrderStatusHistory(orderId: string): Promise<OrderStatusEvent[]> {
+export async function getOrderStatusHistory(
+  orderId: string,
+  isAdmin = false
+): Promise<OrderStatusEvent[]> {
   try {
-    const q = query(
-      collection(db, 'orderStatusEvents'),
-      where('orderId', '==', orderId),
-      orderBy('createdAt', 'desc')
-    );
+    const uid = auth.currentUser?.uid;
+    if (!uid) return [];
+    const eventsCol = collection(db, 'orderStatusEvents');
+    const q = isAdmin
+      ? query(eventsCol, where('orderId', '==', orderId), orderBy('createdAt', 'desc'))
+      : query(
+          eventsCol,
+          where('orderId', '==', orderId),
+          where('customerUid', '==', uid),
+          orderBy('createdAt', 'desc')
+        );
     const snap = await getDocs(q);
     return snap.docs.map((d) => {
       const data = d.data();

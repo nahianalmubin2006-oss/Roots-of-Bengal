@@ -293,27 +293,37 @@ export function subscribeToFirestoreCatalog(
   return onSnapshot(
     q,
     async (snapshot) => {
-      const liveMap = new Map<
-        string,
-        { product: FirestoreProductDoc; variants: FirestoreVariantDoc[] }
-      >();
+      try {
+        const liveMap = new Map<
+          string,
+          { product: FirestoreProductDoc; variants: FirestoreVariantDoc[] }
+        >();
 
-      await Promise.all(
-        snapshot.docs.map(async (docSnap) => {
-          const prodData = docSnap.data() as FirestoreProductDoc;
-          const variantsSnap = await getDocs(collection(db, 'products', docSnap.id, 'variants'));
-          const variants: FirestoreVariantDoc[] = variantsSnap.docs.map(
-            (vDoc) => vDoc.data() as FirestoreVariantDoc
-          );
-          liveMap.set(docSnap.id, { product: prodData, variants });
-        })
-      );
+        await Promise.all(
+          snapshot.docs.map(async (docSnap) => {
+            const prodData = docSnap.data() as FirestoreProductDoc;
+            let variants: FirestoreVariantDoc[] = [];
+            try {
+              const variantsSnap = await getDocs(collection(db, 'products', docSnap.id, 'variants'));
+              variants = variantsSnap.docs.map(
+                (vDoc) => vDoc.data() as FirestoreVariantDoc
+              );
+            } catch {
+              variants = [];
+            }
+            liveMap.set(docSnap.id, { product: prodData, variants });
+          })
+        );
 
-      const merged = mergeLiveAndCatalogProducts(PRODUCTS_DATA, liveMap);
-      const verifiedCount = merged.filter(
-        (m) => !m.isDemoData && m.isPublished && m.verificationStatus === 'verified'
-      ).length;
-      onUpdate(merged, verifiedCount);
+        const merged = mergeLiveAndCatalogProducts(PRODUCTS_DATA, liveMap);
+        const verifiedCount = merged.filter(
+          (m) => !m.isDemoData && m.isPublished && m.verificationStatus === 'verified'
+        ).length;
+        onUpdate(merged, verifiedCount);
+      } catch {
+        const fallback = mergeLiveAndCatalogProducts(PRODUCTS_DATA, new Map());
+        onUpdate(fallback, 0);
+      }
     },
     () => {
       // On error or empty collection, fall back to static catalog cleanly
